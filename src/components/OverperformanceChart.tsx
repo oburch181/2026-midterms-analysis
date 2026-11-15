@@ -112,6 +112,12 @@ export function OverperformanceChart({
     );
   }, [hoveredRaceId, selectedStateCode, enrichedRaces]);
 
+  const winCount = useMemo(
+    () => enrichedRaces.filter((item) => item.uiRace.winnerParty !== 'R').length,
+    [enrichedRaces]
+  );
+  const lossCount = enrichedRaces.length - winCount;
+
   // Scatter coordinate bounds: X (2024 Pres Margin: -45 to +30), Y (2026 Margin: -25 to +42)
   const xMin = -45;
   const xMax = 30;
@@ -276,8 +282,26 @@ export function OverperformanceChart({
         <div className="lg:col-span-8 bg-white border border-stone-200 rounded-lg p-5 sm:p-6">
           {chartView === 'bars' ? (
             <div>
-              <div className="flex items-center justify-between text-xs text-stone-500 mb-4 pb-2 border-b border-stone-100">
-                <span>Race &amp; Featured Candidate</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500 mb-4 pb-2 border-b border-stone-100">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>Race &amp; Featured Candidate</span>
+                  <span className="inline-flex items-center gap-2.5 text-[11px] font-mono">
+                    <span className="inline-flex items-center gap-1 text-[#1E3A8A]">
+                      <span
+                        className="w-1.5 h-3 bg-[#1E3A8A] rounded-xs inline-block"
+                        aria-hidden="true"
+                      />
+                      Won ({winCount})
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[#9A3412]">
+                      <span
+                        className="w-1.5 h-3 bg-[#C2410C] rounded-xs inline-block"
+                        aria-hidden="true"
+                      />
+                      Lost ({lossCount})
+                    </span>
+                  </span>
+                </div>
                 <div className="flex items-center gap-4 font-mono">
                   <span className="hidden sm:inline">
                     {metricMode === 'raw'
@@ -311,6 +335,7 @@ export function OverperformanceChart({
                     activeMetric,
                   }) => {
                     const isSelected = uiRace.stateCode === selectedStateCode;
+                    const didWin = uiRace.winnerParty !== 'R';
                     const maxScale = metricMode === 'raw' ? 28 : 16;
                     const clampedWidth = Math.min(100, (Math.abs(activeMetric) / maxScale) * 100);
                     const factionColor = FACTION_COLORS[uiRace.faction];
@@ -330,12 +355,18 @@ export function OverperformanceChart({
                       onClick={() => onSelectState(uiRace.stateCode)}
                       onMouseEnter={() => setHoveredRaceId(uiRace.id)}
                       onMouseLeave={() => setHoveredRaceId(null)}
-                      className={`w-full text-left grid grid-cols-12 items-center gap-2 px-2.5 py-2 rounded transition-colors cursor-pointer ${
-                        isSelected ? 'bg-[#EFECE5] ring-1 ring-stone-400' : 'hover:bg-stone-50'
+                      className={`w-full text-left grid grid-cols-12 items-center gap-2 px-2.5 py-2 rounded border-l-2 transition-colors cursor-pointer ${
+                        didWin ? 'border-l-[#1E3A8A]' : 'border-l-[#C2410C]'
+                      } ${
+                        isSelected
+                          ? 'bg-[#EFECE5] ring-1 ring-stone-400'
+                          : didWin
+                          ? 'hover:bg-stone-50'
+                          : 'bg-[#FFFBF7] hover:bg-[#FEF3EC]'
                       }`}
                     >
                       <div className="col-span-5 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
                           <span
                             className="w-2 h-2 rounded-xs shrink-0"
                             style={{ backgroundColor: factionColor }}
@@ -345,10 +376,27 @@ export function OverperformanceChart({
                             {uiRace.stateCode} {uiRace.office === 'Senate' ? 'Sen' : 'Gov'} ·{' '}
                             {uiRace.featuredCandidate}
                           </span>
+                          <span
+                            className={`shrink-0 font-mono text-[9px] font-semibold leading-none px-1 py-0.5 rounded-xs border ${
+                              uiRace.flipped
+                                ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
+                                : didWin
+                                ? 'bg-[#EFF6FF] text-[#1E3A8A] border-[#BFDBFE]'
+                                : 'bg-[#FFF7ED] text-[#9A3412] border-[#FDBA74]'
+                            }`}
+                          >
+                            {uiRace.flipped ? 'FLIP' : didWin ? 'WON' : 'LOST'}
+                          </span>
                         </div>
-                        <span className="block text-[11px] text-stone-500 pl-4 truncate">
-                          {uiRace.faction}
-                          {uiRace.flipped ? ' · Flip' : ''}
+                        <span className="block text-[11px] text-stone-500 pl-3.5 truncate">
+                          <span
+                            className={`font-mono font-medium ${
+                              didWin ? 'text-[#1E3A8A]' : 'text-[#9A3412]'
+                            }`}
+                          >
+                            {formatPartyMargin(uiRace.demOrCoalitionMargin2026)}
+                          </span>{' '}
+                          · {uiRace.faction}
                         </span>
                       </div>
 
@@ -399,6 +447,7 @@ export function OverperformanceChart({
               <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs text-stone-600">
                 <span>Horizontal: 2024 Pres. Margin · Vertical: 2026 Margin</span>
                 <div className="flex flex-wrap items-center gap-4 font-mono text-[11px]">
+                  <span className="text-stone-700">● Won · ○ Lost</span>
                   <span className="text-[#1E3A8A]">--- National Mean (+{nationalAvgShift.toFixed(1)})</span>
                   <span className="text-[#4338CA]">··· Logit Curve (β={logitParams.beta.toFixed(2)})</span>
                 </div>
@@ -510,6 +559,7 @@ export function OverperformanceChart({
                     const cx = toX(uiRace.presMargin2024);
                     const cy = toY(uiRace.demOrCoalitionMargin2026);
                     const isFocused = focusedItem?.race.id === uiRace.id;
+                    const didWin = uiRace.winnerParty !== 'R';
                     const color = FACTION_COLORS[uiRace.faction];
 
                     return (
@@ -524,10 +574,10 @@ export function OverperformanceChart({
                           cx={cx}
                           cy={cy}
                           r={isFocused ? 7.5 : uiRace.flipped ? 6 : 4.5}
-                          fill={color}
-                          fillOpacity={isFocused ? 1 : 0.85}
-                          stroke={isFocused ? '#1C1917' : '#FFFFFF'}
-                          strokeWidth={isFocused ? 2 : 1.2}
+                          fill={didWin ? color : '#FBF9F5'}
+                          fillOpacity={isFocused ? 1 : didWin ? 0.85 : 0.95}
+                          stroke={isFocused ? '#1C1917' : didWin ? '#FFFFFF' : color}
+                          strokeWidth={isFocused ? 2 : didWin ? 1.2 : 2}
                         />
                         {(isFocused || uiRace.flipped || Math.abs(uiRace.presMargin2024) > 28) && (
                           <text
@@ -564,12 +614,31 @@ export function OverperformanceChart({
               <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
                 Selected Race Summary
               </p>
-              <h3 className="text-xl font-display font-semibold text-stone-900 mt-1">
-                {focusedItem.uiRace.featuredCandidate} ({focusedItem.uiRace.featuredParty})
-              </h3>
-              <p className="text-xs text-stone-600 mt-0.5">
-                {focusedItem.uiRace.raceLabel} · {focusedItem.uiRace.faction}
-              </p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-xl font-display font-semibold text-stone-900 mt-1">
+                    {focusedItem.uiRace.featuredCandidate} ({focusedItem.uiRace.featuredParty})
+                  </h3>
+                  <p className="text-xs text-stone-600 mt-0.5">
+                    {focusedItem.uiRace.raceLabel} · {focusedItem.uiRace.faction}
+                  </p>
+                </div>
+                <span
+                  className={`mt-1 shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded-xs border ${
+                    focusedItem.uiRace.flipped
+                      ? 'bg-[#1E3A8A] text-white border-[#1E3A8A]'
+                      : focusedItem.uiRace.winnerParty !== 'R'
+                      ? 'bg-[#EFF6FF] text-[#1E3A8A] border-[#BFDBFE]'
+                      : 'bg-[#FFF7ED] text-[#9A3412] border-[#FDBA74]'
+                  }`}
+                >
+                  {focusedItem.uiRace.flipped
+                    ? 'FLIPPED'
+                    : focusedItem.uiRace.winnerParty !== 'R'
+                    ? 'WON'
+                    : 'LOST'}
+                </span>
+              </div>
 
               <dl className="mt-5 divide-y divide-stone-200 border-t border-b border-stone-200 text-sm">
                 <div className="py-2.5 flex justify-between gap-2">
