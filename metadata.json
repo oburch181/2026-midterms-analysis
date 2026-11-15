@@ -1,0 +1,6 @@
+{
+  "name": "The 2026 Ledger — Midterm Shift & 2028 Outlook",
+  "description": "An interactive editorial analysis of the November 2026 U.S. midterm election results, mapping state-by-state partisan shifts, candidate overperformance, ideological affiliations, policy stances, and implications for the 2028 presidential race.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
