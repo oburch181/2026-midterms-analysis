@@ -200,8 +200,9 @@ export function MethodologyModal({
             <p className="mt-2.5 text-xs text-stone-600">
               Note: Statewide Senate and Governor averages (+14 to +16 pts) exceed the national U.S.
               House popular vote swing (~+7 to +9 pts per AP) because several safe Republican states
-              compressed sharply down-ballot while states with no 2026 Senate/Governor race are
-              excluded from the statewide mean.
+              compressed sharply down-ballot, states without a 2026 Senate/Governor contest are
+              excluded, and U.S. House districts are omitted because mid-cycle redistricting breaks
+              clean 2024-to-2026 district baselines.
             </p>
           </div>
 

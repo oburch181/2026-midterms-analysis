@@ -356,16 +356,15 @@ export default function App() {
                   <strong className="font-semibold text-stone-900">
                     +{unweightedAvg.toFixed(1)}-point
                   </strong>{' '}
-                  landslide swept a remarkably wide spectrum of Democrats into office—from centrist
-                  coalition builders like <strong>Roy Cooper</strong>, <strong>Rob Sand</strong>,
-                  and <strong>Josh Shapiro</strong>, to economic populists like{' '}
-                  <strong>James Talarico</strong> and <strong>Sherrod Brown</strong>, to
-                  progressive reformers like <strong>Troy Jackson</strong> and{' '}
-                  <strong>Abdul El-Sayed</strong> (alongside independent{' '}
+                  wave swept a wide range of Democrats into office, from centrists like{' '}
+                  <strong>Roy Cooper</strong>, <strong>Rob Sand</strong>, and{' '}
+                  <strong>Josh Shapiro</strong> to economic populists like{' '}
+                  <strong>James Talarico</strong> and <strong>Sherrod Brown</strong> and
+                  progressives like <strong>Troy Jackson</strong> and{' '}
+                  <strong>Abdul El-Sayed</strong>—alongside independent challengers such as{' '}
                   <strong>Dan Osborn</strong> and surviving Republicans like{' '}
-                  <strong>Byron Donalds</strong>). When a wave that large flips {flipCount} seats,
-                  every wing can claim vindication. By drilling into the variations from that
-                  average across all{' '}
+                  <strong>Byron Donalds</strong>. When a tsunami flips {flipCount} seats, every
+                  faction can claim credit. Looking at how all{' '}
                   <a
                     href="#sources"
                     className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
@@ -373,17 +372,17 @@ export default function App() {
                     <span className="font-mono text-sm tabular-nums">
                       {STATEWIDE_RACES_2026.length}
                     </span>{' '}
-                    Senate and Governor races
+                    Senate and Governor contests
                   </a>{' '}
-                  (which you can even reclassify by camp in{' '}
+                  performed relative to that average—with live camp reassignment available in{' '}
                   <a
                     href="#affiliations"
                     className="text-[#1E3A8A] underline underline-offset-4 font-sans text-sm"
                   >
                     Section 03
                   </a>
-                  ), what do those gaps tell us about the candidates and policies American voters
-                  truly prefer—and how should that guide Democrats in 2028?
+                  —reveals which candidates and policies voters actually rewarded, and what lessons
+                  Democrats can carry into 2028.
                 </p>
 
                 <p>
@@ -492,6 +491,17 @@ export default function App() {
                   </a>{' '}
                   show working-class and Latino rebounds across states—putting the focus on which
                   concrete policies outperformed that wave.
+                </p>
+              </div>
+
+              <div className="p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
+                <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
+                  Context Note 03 · Why House Races Are Excluded
+                </p>
+                <p className="mt-2 text-stone-700 leading-relaxed">
+                  Unlike Senate and Governor elections held on fixed state borders, several U.S.
+                  House districts were redrawn between 2024 and 2026—breaking the clean geographic
+                  through-line needed to compare exact shifts against prior results.
                 </p>
               </div>
             </aside>
