@@ -216,8 +216,8 @@ export default function App() {
             <p className="mt-4 text-lg sm:text-xl font-serif text-stone-600 leading-relaxed max-w-3xl">
               A 15-point wave (+{unweightedAvg.toFixed(1)} state mean, +{weightedAvg.toFixed(1)}{' '}
               vote-weighted) flipped {flipCount} seats from Texas to Maine—lifting winners across
-              every wing of the party. Drilling into differences from these means helps highlight
-              which candidates merely rode the wave and which ones were leading the charge.
+              every wing of the party. Drilling into differences highlights which candidates merely
+              rode the wave and which ones were leading the charge.
             </p>
           </header>
 
