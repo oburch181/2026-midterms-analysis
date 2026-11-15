@@ -61,12 +61,6 @@ const FACTION_SHORT: Record<string, { abbr: string; bg: string; text: string; bo
     text: 'text-white',
     border: 'border-[#78350F]',
   },
-  'GOP Resilience Hold': {
-    abbr: 'GOP',
-    bg: 'bg-[#9A3412]',
-    text: 'text-white',
-    border: 'border-[#7C2D12]',
-  },
 };
 
 export function USStateTileMap({
@@ -511,9 +505,6 @@ export function USStateTileMap({
                 <span className="inline-flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-xs bg-[#92400E] inline-block" /> IND: Independent
                 </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-xs bg-[#9A3412] inline-block" /> GOP: GOP Hold
-                </span>
               </div>
             )}
             <span className="font-mono text-[11px] text-stone-500">* = Seat flipped party in 2026</span>
@@ -583,6 +574,12 @@ export function USStateTileMap({
                   const logitAdj = metrics?.logitAdjustedResidual ?? 0;
                   const demoAdj = metrics?.adjustedDifference ?? 0;
 
+                  const featuredIsWinner = race.featuredCandidate === race.winnerName;
+                  const featuredShare = featuredIsWinner ? race.winnerShare : race.challengerShare;
+                  const opponentName = featuredIsWinner ? race.challengerName : race.winnerName;
+                  const opponentParty = featuredIsWinner ? race.challengerParty : race.winnerParty;
+                  const opponentShare = featuredIsWinner ? race.challengerShare : race.winnerShare;
+
                   return (
                     <div key={race.id} className="py-5 first:pt-4 last:pb-2">
                       <div className="flex items-center justify-between gap-2 text-xs text-stone-500 mb-1.5">
@@ -595,10 +592,10 @@ export function USStateTileMap({
 
                       <div className="flex items-baseline justify-between gap-3">
                         <p className="text-base font-semibold text-stone-900">
-                          {race.winnerName} ({race.winnerParty}) {race.winnerShare.toFixed(1)}%
+                          {race.featuredCandidate} ({race.featuredParty}) {featuredShare.toFixed(1)}%
                         </p>
                         <p className="text-xs text-stone-600 font-mono tabular-nums">
-                          vs. {race.challengerName} ({race.challengerParty}) {race.challengerShare.toFixed(1)}%
+                          vs. {opponentName} ({opponentParty}) {opponentShare.toFixed(1)}%
                         </p>
                       </div>
 

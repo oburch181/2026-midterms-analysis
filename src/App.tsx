@@ -111,7 +111,7 @@ export default function App() {
   const ctrAgg = factionSummary.find((f) => f.faction === 'Pragmatic Center-Left');
   const popAgg = factionSummary.find((f) => f.faction === 'Economic Populist & Labor');
   const progAgg = factionSummary.find((f) => f.faction === 'Progressive Reformer');
-  const gopAgg = factionSummary.find((f) => f.faction === 'GOP Resilience Hold');
+  const indAgg = factionSummary.find((f) => f.faction === 'Independent Populist');
 
   const policySummary = useMemo(
     () => aggregateByPolicy(RAW_RACES_2026, activeNationalAvgShift, undefined, combinedMap, logitMap),
@@ -356,15 +356,15 @@ export default function App() {
                   <strong className="font-semibold text-stone-900">
                     +{unweightedAvg.toFixed(1)}-point
                   </strong>{' '}
-                  wave swept a wide range of Democrats into office, from centrists like{' '}
-                  <strong>Roy Cooper</strong>, <strong>Rob Sand</strong>, and{' '}
+                  wave lifted Democratic and coalition candidates across every ideological lane, from
+                  winning centrists like <strong>Roy Cooper</strong>, <strong>Rob Sand</strong>, and{' '}
                   <strong>Josh Shapiro</strong> to economic populists like{' '}
-                  <strong>James Talarico</strong> and <strong>Sherrod Brown</strong> and
-                  progressives like <strong>Troy Jackson</strong> and{' '}
-                  <strong>Abdul El-Sayed</strong>—alongside independent challengers such as{' '}
-                  <strong>Dan Osborn</strong> and surviving Republicans like{' '}
-                  <strong>Byron Donalds</strong>. When a tsunami flips {flipCount} seats, every
-                  faction can claim credit. Looking at how all{' '}
+                  <strong>James Talarico</strong> and <strong>Sherrod Brown</strong>, progressives
+                  like <strong>Troy Jackson</strong> and <strong>Abdul El-Sayed</strong>, and
+                  long-shot challengers such as <strong>Angie Nixon</strong>,{' '}
+                  <strong>David Jolly</strong>, and independent <strong>Dan Osborn</strong>. When a
+                  tsunami flips {flipCount} seats, every faction can claim credit. Looking at how
+                  all{' '}
                   <a
                     href="#sources"
                     className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
@@ -725,7 +725,7 @@ export default function App() {
                 </p>
                 <p className="mt-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
                   <strong>Cost of Living &amp; Inflation</strong> appeared in{' '}
-                  <strong className="font-mono">{costPolicy?.count ?? 38}</strong> of{' '}
+                  <strong className="font-mono">{costPolicy?.count ?? 37}</strong> of{' '}
                   {STATEWIDE_RACES_2026.length} tracked campaigns and posted a near-baseline{' '}
                   <strong className="font-mono">
                     {formatSignedMargin(costPolicy?.avgResidual ?? 0.5)}
@@ -740,37 +740,41 @@ export default function App() {
                   Lagged the Wave · Potential Gain Separates Camps
                 </p>
                 <p className="mt-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
-                  On Mean-Adjusted, <strong>Economic Populist &amp; Labor</strong> (
+                  On Mean-Adjusted, <strong>Pragmatic Center-Left</strong> (
+                  <strong className="font-mono">
+                    {formatSignedMargin(ctrAgg?.avgResidual ?? 2.0)}
+                  </strong>
+                  ) and <strong>Economic Populist &amp; Labor</strong> (
                   <strong className="font-mono">
                     {formatSignedMargin(popAgg?.avgResidual ?? 2.0)}
                   </strong>
-                  ) and <strong>Pragmatic Center-Left</strong> (
-                  <strong className="font-mono">
-                    {formatSignedMargin(ctrAgg?.avgResidual ?? 1.9)}
-                  </strong>
-                  ) tie—but <strong>Logit-Adjusted</strong> puts Center-Left ahead (
+                  ) finish dead even—but <strong>Logit-Adjusted</strong> lifts Center-Left ahead (
                   <strong className="font-mono text-[#4338CA]">
-                    {formatSignedMargin(ctrAgg?.avgLogitAdjustedResidual ?? 2.8)}
+                    {formatSignedMargin(ctrAgg?.avgLogitAdjustedResidual ?? 2.4)}
                   </strong>{' '}
                   vs.{' '}
                   <span className="font-mono">
-                    {formatSignedMargin(popAgg?.avgLogitAdjustedResidual ?? 1.1)}
+                    {formatSignedMargin(popAgg?.avgLogitAdjustedResidual ?? 0.6)}
                   </span>
-                  ) and flips <strong>GOP Resilience</strong> negative (
+                  ). Meanwhile, <strong>Independent Populists</strong> (
                   <span className="font-mono">
-                    {formatSignedMargin(gopAgg?.avgLogitAdjustedResidual ?? -1.4)}
-                  </span>
-                  ). <strong>Labor &amp; Anti-Monopoly</strong> (
-                  <span className="font-mono">
-                    {formatSignedMargin(laborPolicy?.avgResidual ?? -4.4)}
-                  </span>
-                  ) and <strong>Progressive Reformer</strong> (
-                  <span className="font-mono">
-                    {formatSignedMargin(progAgg?.avgResidual ?? -11.2)}
+                    {formatSignedMargin(indAgg?.avgResidual ?? -2.9)}
                   </span>{' '}
                   mean /{' '}
                   <span className="font-mono">
-                    {formatSignedMargin(progAgg?.avgLogitAdjustedResidual ?? -8.1)}
+                    {formatSignedMargin(indAgg?.avgLogitAdjustedResidual ?? -5.8)}
+                  </span>{' '}
+                  logit), <strong>Labor &amp; Anti-Monopoly</strong> (
+                  <span className="font-mono">
+                    {formatSignedMargin(laborPolicy?.avgResidual ?? -3.5)}
+                  </span>
+                  ), and <strong>Progressive Reformers</strong> (
+                  <span className="font-mono">
+                    {formatSignedMargin(progAgg?.avgResidual ?? -6.8)}
+                  </span>{' '}
+                  mean /{' '}
+                  <span className="font-mono">
+                    {formatSignedMargin(progAgg?.avgLogitAdjustedResidual ?? -5.9)}
                   </span>{' '}
                   logit) trailed both benchmarks.
                 </p>
@@ -864,11 +868,11 @@ export default function App() {
                       <span className="font-mono text-[#0F766E]">
                         {formatSignedMargin(iaGovMetric?.adjustedDifference ?? 11.1)}
                       </span>
-                      ) to #1 and pulls <strong>West Virginia</strong> (WV-Sen,{' '}
+                      ) to #1 and pulls <strong>Rachel Fetty Anderson</strong> (WV-Sen,{' '}
                       <span className="font-mono text-[#0F766E]">
                         {formatSignedMargin(wvSenMetric?.adjustedDifference ?? 9.2)}
                       </span>
-                      ) and <strong>South Carolina</strong> into the top five, while trimming{' '}
+                      ) and <strong>Annie Andrews</strong> (SC-Sen) into the top five, while trimming{' '}
                       <strong>James Talarico</strong> (
                       <span className="font-mono">
                         {formatSignedMargin(txSenMetric?.adjustedDifference ?? 5.2)}
@@ -957,7 +961,7 @@ export default function App() {
                               {row.race.flipped
                                 ? 'Flipped seat (D)'
                                 : row.race.demOrCoalitionMargin2026 < 0
-                                  ? `R hold, ${Math.abs(row.rawShift).toFixed(1)}-pt D compression`
+                                  ? `Lost (${row.race.featuredParty}), +${row.rawShift.toFixed(1)}-pt gain`
                                   : 'Incumbent party hold'}
                             </span>
                           </td>
@@ -1054,7 +1058,10 @@ export default function App() {
                       <span className="font-mono">
                         {formatSignedMargin(nyGovMetric?.logitAdjustedResidual ?? -4.8)}
                       </span>
-                      ) and spotlights races that left achievable ground behind.
+                      ) and spotlights races that left achievable ground behind—including{' '}
+                      <strong>Angie Nixon</strong> (FL-Sen) and <strong>Seth Bodnar</strong>{' '}
+                      (MT-Sen) alongside <strong>ME-Sen</strong>, <strong>OR-Sen</strong>, and{' '}
+                      <strong>MN-Sen</strong>.
                     </>
                   )}
                   {losersSortMetric === 'mean' && (

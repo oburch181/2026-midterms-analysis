@@ -118,15 +118,13 @@ function ColumnHeaderTooltip({
 
 const FACTION_SUMMARIES: Record<FactionLane, string> = {
   'Pragmatic Center-Left':
-    'Institutional New Dem / moderate coalitions (Cooper, Sand, Shapiro, Andrews) focused on Medicaid and cross-party competence.',
+    'Institutional New Dem / moderate coalitions (Cooper, Sand, Shapiro, Jolly) focused on Medicaid, cost relief, and cross-party competence across wins and close red-state runs.',
   'Economic Populist & Labor':
-    'CWCP-style economic populists (Talarico, Hinojosa, Turek, Brown) pairing anti-corporate pocketbook fights with public school defense.',
+    'CWCP-style economic populists (Talarico, Hinojosa, Turek, Brown, Thomas) pairing anti-corporate pocketbook fights with healthcare and public schools.',
   'Progressive Reformer':
-    'Systemic reform and Sanders/CPC-aligned wings (El-Sayed, Markey, Flanagan, Merkley, Jackson); mostly ran in D+4 to D+25 states.',
+    'Systemic reform and Sanders/CPC-aligned wings (El-Sayed, Markey, Flanagan, Jackson, Nixon, Booker) spanning blue holds, flips, and red-state challenges.',
   'Independent Populist':
     'Non-party challengers (Osborn in NE, Bodnar in MT, Achilles in ID) testing whether dropping the Democratic label helps in R+20+ states.',
-  'GOP Resilience Hold':
-    'Right-of-center holds (Donalds, Moody, Capito) emphasizing housing permitting, energy, and local growth.',
 };
 
 export function AffiliationPolicyAnalysis({
@@ -383,7 +381,7 @@ export function AffiliationPolicyAnalysis({
       {/* Framework Attribution: Why These 5 Affiliation Groups? */}
       <div className="mb-8 p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
         <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-          How These Five Camps Are Defined
+          How These Four Camps Are Defined
         </p>
         <div className="mt-2.5 grid grid-cols-1 md:grid-cols-3 gap-5 text-xs sm:text-sm text-stone-700 leading-relaxed">
           <p>
@@ -399,7 +397,7 @@ export function AffiliationPolicyAnalysis({
               :
             </strong>{' '}
             Separates institutional coalitions (<strong>Pragmatic Center-Left</strong>) from
-            systemic wings (<strong>Progressive Reformer</strong>) and GOP holds.
+            systemic wings (<strong>Progressive Reformer</strong>) across wins and losses.
           </p>
           <p>
             <strong className="text-stone-900">
@@ -771,8 +769,8 @@ export function AffiliationPolicyAnalysis({
             const prog = factionStats.find((f) => f.faction === 'Progressive Reformer');
             const pop = factionStats.find((f) => f.faction === 'Economic Populist & Labor');
             const ctr = factionStats.find((f) => f.faction === 'Pragmatic Center-Left');
-            const gop = factionStats.find((f) => f.faction === 'GOP Resilience Hold');
-            return `Ranked by Mean-Adjusted Diff., Economic Populist & Labor (${formatSignedMargin(pop?.avgMeanAdjusted ?? 2.0)} pts, ${pop?.flips ?? 4} flips) and Pragmatic Center-Left (${formatSignedMargin(ctr?.avgMeanAdjusted ?? 1.9)} pts, ${ctr?.flips ?? 8} flips) finish virtually tied. Under Logit-Adjusted potential gain, Pragmatic Center-Left (${formatSignedMargin(ctr?.avgLogitAdjusted ?? 2.8)} pts) leads Economic Populist (${formatSignedMargin(pop?.avgLogitAdjusted ?? 1.1)} pts), while GOP Resilience Holds flip from ${formatSignedMargin(gop?.avgMeanAdjusted ?? 1.7)} mean to ${formatSignedMargin(gop?.avgLogitAdjusted ?? -1.4)} logit and Progressive Reformers narrow from ${formatSignedMargin(prog?.avgMeanAdjusted ?? -11.2)} to ${formatSignedMargin(prog?.avgLogitAdjusted ?? -8.1)}.`;
+            const ind = factionStats.find((f) => f.faction === 'Independent Populist');
+            return `Ranked by Mean-Adjusted Diff., Pragmatic Center-Left (${formatSignedMargin(ctr?.avgMeanAdjusted ?? 2.0)} pts, ${ctr?.flips ?? 8} flips) and Economic Populist & Labor (${formatSignedMargin(pop?.avgMeanAdjusted ?? 2.0)} pts, ${pop?.flips ?? 4} flips) finish virtually tied. Under Logit-Adjusted potential gain, Pragmatic Center-Left (${formatSignedMargin(ctr?.avgLogitAdjusted ?? 2.4)} pts) opens a clear lead over Economic Populist (${formatSignedMargin(pop?.avgLogitAdjusted ?? 0.6)} pts), while Independent Populists (${formatSignedMargin(ind?.avgMeanAdjusted ?? -2.9)} mean / ${formatSignedMargin(ind?.avgLogitAdjusted ?? -5.8)} logit) and Progressive Reformers (${formatSignedMargin(prog?.avgMeanAdjusted ?? -6.8)} mean / ${formatSignedMargin(prog?.avgLogitAdjusted ?? -5.9)} logit) trail both benchmarks across wins and red-state challenges.`;
           })()}
         </div>
       </div>

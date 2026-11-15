@@ -32,7 +32,6 @@ const FACTION_COLORS: Record<FactionLane, string> = {
   'Economic Populist & Labor': '#0F766E',
   'Progressive Reformer': '#4338CA',
   'Independent Populist': '#92400E',
-  'GOP Resilience Hold': '#9A3412',
 };
 
 export function OverperformanceChart({
@@ -236,7 +235,6 @@ export function OverperformanceChart({
               'Economic Populist & Labor',
               'Progressive Reformer',
               'Independent Populist',
-              'GOP Resilience Hold',
             ] as (FactionLane | 'All')[]
           ).map((fac) => (
             <button

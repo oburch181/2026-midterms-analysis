@@ -7,8 +7,7 @@ export type FactionLane =
   | 'Pragmatic Center-Left'
   | 'Economic Populist & Labor'
   | 'Progressive Reformer'
-  | 'Independent Populist'
-  | 'GOP Resilience Hold';
+  | 'Independent Populist';
 
 export type PolicyPillar =
   | 'Cost of Living & Inflation'

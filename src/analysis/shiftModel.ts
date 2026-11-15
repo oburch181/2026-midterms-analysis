@@ -14,7 +14,6 @@ export const ALL_FACTIONS: FactionLane[] = [
   'Economic Populist & Labor',
   'Progressive Reformer',
   'Independent Populist',
-  'GOP Resilience Hold',
 ];
 
 export const ALL_POLICY_PILLARS: PolicyPillar[] = [
