@@ -507,18 +507,6 @@ export default function App() {
             </aside>
             </div>
           </section>
-
-          {/* Editorial Pull Quote (Top/Bottom hairlines, zero thick left bar) */}
-          <blockquote className="my-12 py-8 border-t border-b border-stone-300 max-w-4xl mx-auto text-center">
-            <p className="font-display italic text-2xl sm:text-3xl text-stone-800 leading-snug">
-              &ldquo;Tuesday&apos;s map rewarded neither pure moderation nor pure insurgency—it
-              rewarded candidates who translated grocery, utility, and healthcare strain into
-              credible local accountability.&rdquo;
-            </p>
-            <footer className="mt-3 text-xs uppercase tracking-widest text-stone-500 font-sans">
-              Synthesis of Brookings, Cook Political Report &amp; AP 2026 Exit Coverage
-            </footer>
-          </blockquote>
         </article>
 
         {/* Interactive Section 1: US State Tile Cartogram */}
