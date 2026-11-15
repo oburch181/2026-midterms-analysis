@@ -16,6 +16,7 @@ import {
 } from './analysis';
 import {
   BenchmarkMode,
+  FactionLane,
   PRIMARY_DATA_SOURCES,
   STATEWIDE_RACES_2026,
   SourceCategory,
@@ -23,12 +24,54 @@ import {
   formatSignedMargin,
 } from './data/electionData';
 
+type SummaryRankMetric = 'mean' | 'logit' | 'adjusted' | 'raw';
+
+const SUMMARY_METRIC_OPTIONS: { id: SummaryRankMetric; label: string }[] = [
+  { id: 'mean', label: 'Mean-Adj.' },
+  { id: 'logit', label: 'Logit-Adj.' },
+  { id: 'adjusted', label: 'Demo-Adj.' },
+  { id: 'raw', label: 'Raw Diff.' },
+];
+
 export default function App() {
   const [benchmarkMode, setBenchmarkMode] = useState<BenchmarkMode>('unweighted');
   const demographicShifts = DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS;
+  const [factionOverrides, setFactionOverrides] = useState<Record<string, FactionLane>>({});
   const [selectedStateCode, setSelectedStateCode] = useState<string>('TX');
   const [methodologyOpen, setMethodologyOpen] = useState<boolean>(false);
   const [heroImageError, setHeroImageError] = useState<boolean>(false);
+  const [winnersSortMetric, setWinnersSortMetric] = useState<SummaryRankMetric>('mean');
+  const [losersSortMetric, setLosersSortMetric] = useState<SummaryRankMetric>('logit');
+
+  const defaultFactionById = useMemo(
+    () => new Map(RAW_RACES_2026.map((r) => [r.id, r.faction])),
+    []
+  );
+
+  function handleChangeFaction(raceId: string, nextFaction: FactionLane) {
+    setFactionOverrides((prev) => {
+      const updated = { ...prev };
+      if (defaultFactionById.get(raceId) === nextFaction) {
+        delete updated[raceId];
+      } else {
+        updated[raceId] = nextFaction;
+      }
+      return updated;
+    });
+  }
+
+  function handleResetFactions() {
+    setFactionOverrides({});
+  }
+
+  const effectiveRawRaces = useMemo(
+    () =>
+      RAW_RACES_2026.map((r) => ({
+        ...r,
+        faction: factionOverrides[r.id] ?? r.faction,
+      })),
+    [factionOverrides]
+  );
 
   const unweightedAvg = useMemo(
     () => calculateNationalAverageShift(STATEWIDE_RACES_2026, 'unweighted'),
@@ -56,17 +99,23 @@ export default function App() {
     [combinedMetrics]
   );
 
+  const logitMap = useMemo(
+    () => new Map(combinedMetrics.map((m) => [m.race.id, m.logitAdjustedResidual])),
+    [combinedMetrics]
+  );
+
   const factionSummary = useMemo(
-    () => aggregateByFaction(RAW_RACES_2026, activeNationalAvgShift, combinedMap),
-    [activeNationalAvgShift, combinedMap]
+    () => aggregateByFaction(effectiveRawRaces, activeNationalAvgShift, combinedMap, logitMap),
+    [effectiveRawRaces, activeNationalAvgShift, combinedMap, logitMap]
   );
   const ctrAgg = factionSummary.find((f) => f.faction === 'Pragmatic Center-Left');
   const popAgg = factionSummary.find((f) => f.faction === 'Economic Populist & Labor');
   const progAgg = factionSummary.find((f) => f.faction === 'Progressive Reformer');
+  const gopAgg = factionSummary.find((f) => f.faction === 'GOP Resilience Hold');
 
   const policySummary = useMemo(
-    () => aggregateByPolicy(RAW_RACES_2026, activeNationalAvgShift, undefined, combinedMap),
-    [activeNationalAvgShift, combinedMap]
+    () => aggregateByPolicy(RAW_RACES_2026, activeNationalAvgShift, undefined, combinedMap, logitMap),
+    [activeNationalAvgShift, combinedMap, logitMap]
   );
   const tradePolicy = policySummary.find((p) => p.pillar === 'Trade & Tariffs');
   const eduPolicy = policySummary.find((p) => p.pillar === 'Public Education & Anti-Voucher');
@@ -76,11 +125,16 @@ export default function App() {
 
   const txSenMetric = combinedMetrics.find((m) => m.race.id === 'TX-SEN');
   const txGovMetric = combinedMetrics.find((m) => m.race.id === 'TX-GOV');
-  const paGovMetric = combinedMetrics.find((m) => m.race.id === 'PA-GOV');
   const iaGovMetric = combinedMetrics.find((m) => m.race.id === 'IA-GOV');
   const nmSenMetric = combinedMetrics.find((m) => m.race.id === 'NM-SEN');
   const caGovMetric = combinedMetrics.find((m) => m.race.id === 'CA-GOV');
   const wvSenMetric = combinedMetrics.find((m) => m.race.id === 'WV-SEN');
+  const maSenMetric = combinedMetrics.find((m) => m.race.id === 'MA-SEN');
+  const nyGovMetric = combinedMetrics.find((m) => m.race.id === 'NY-GOV');
+  const okSenMetric = combinedMetrics.find((m) => m.race.id === 'OK-SEN');
+  const paGovMetric = combinedMetrics.find((m) => m.race.id === 'PA-GOV');
+  const ncSenMetric = combinedMetrics.find((m) => m.race.id === 'NC-SEN');
+  const riSenMetric = combinedMetrics.find((m) => m.race.id === 'RI-SEN');
 
   const modelConvergence = useMemo(() => {
     const n = combinedMetrics.length;
@@ -102,12 +156,39 @@ export default function App() {
     return { r, sameSignCount, withinTwoCount };
   }, [combinedMetrics]);
 
-  const sortedByDemoAdj = useMemo(
-    () => [...combinedMetrics].sort((a, b) => b.adjustedDifference - a.adjustedDifference),
-    [combinedMetrics]
+  function getCombinedMetricValue(
+    item: (typeof combinedMetrics)[number],
+    metric: SummaryRankMetric
+  ): number {
+    if (metric === 'logit') return item.logitAdjustedResidual;
+    if (metric === 'adjusted') return item.adjustedDifference;
+    if (metric === 'raw') return item.rawShift;
+    return item.afterMeanResidual;
+  }
+
+  const topOverperformers = useMemo(
+    () =>
+      [...combinedMetrics]
+        .sort(
+          (a, b) =>
+            getCombinedMetricValue(b, winnersSortMetric) -
+            getCombinedMetricValue(a, winnersSortMetric)
+        )
+        .slice(0, 5),
+    [combinedMetrics, winnersSortMetric]
   );
-  const topOverperformers = sortedByDemoAdj.slice(0, 5);
-  const widestUnderperformers = [...sortedByDemoAdj].reverse().slice(0, 5);
+
+  const widestUnderperformers = useMemo(
+    () =>
+      [...combinedMetrics]
+        .sort(
+          (a, b) =>
+            getCombinedMetricValue(a, losersSortMetric) -
+            getCombinedMetricValue(b, losersSortMetric)
+        )
+        .slice(0, 5),
+    [combinedMetrics, losersSortMetric]
+  );
 
   const laborPolicy = policySummary.find((p) => p.pillar === 'Labor & Anti-Monopoly');
   const costPolicy = policySummary.find((p) => p.pillar === 'Cost of Living & Inflation');
@@ -129,14 +210,14 @@ export default function App() {
             </div>
 
             <h1 className="mt-4 text-3xl sm:text-5xl font-display font-semibold tracking-tight text-stone-900 leading-[1.12]">
-              What Tuesday&apos;s Swings Actually Tell Us About 2028
+              What Tuesday&apos;s Midterm Tsunami Tells Us About 2028
             </h1>
 
             <p className="mt-4 text-lg sm:text-xl font-serif text-stone-600 leading-relaxed max-w-3xl">
-              Raw election night margins make a wave look uniform. When we normalize Tuesday&apos;s{' '}
-              {STATEWIDE_RACES_2026.length} Senate and Governor races against 2024 baselines—and
-              then against national demographic shifts—we can see who truly outran the tide, and
-              what story that leftover gap tells.
+              A 15-point wave (+{unweightedAvg.toFixed(1)} state mean, +{weightedAvg.toFixed(1)}{' '}
+              vote-weighted) flipped {flipCount} seats from Texas to Maine—lifting winners across
+              every wing of the party. Drilling into differences from these means helps highlight
+              which candidates merely rode the wave and which ones were leading the charge.
             </p>
           </header>
 
@@ -204,7 +285,7 @@ export default function App() {
                 ~+8.5 pts
               </span>
               <span className="mt-1 block text-[11px] text-stone-500">
-                D ~56% to R ~42% (AP / Ballotpedia)
+                2026 House vote vs. 2024 baseline (AP / Ballotpedia)
               </span>
             </div>
           </div>
@@ -213,48 +294,56 @@ export default function App() {
           <section id="thesis" className="mt-12 scroll-mt-24">
             <div className="mb-8 p-6 sm:p-8 bg-[#F5F2EB] border border-stone-200 rounded-lg">
               <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-                The Core Lens · Three Numbers That Matter
+                The Core Lens · Four Numbers That Matter
               </p>
               <h2 className="text-xl sm:text-2xl font-display font-semibold text-stone-900 mt-1">
-                Separating Candidate Appeal From the National Tide and State Demographics
+                Separating Candidate Appeal From the Tide, Ceiling Room, and Demographics
               </h2>
               <p className="mt-2 text-sm text-stone-700 leading-relaxed max-w-3xl">
-                When Democrats flip seats from Texas to Maine, raw margins make the entire map look
-                like one sweeping story. To see what voters actually rewarded in 2026—and what
-                matters for 2028—we track three paired numbers for every statewide race:
+                To see what voters rewarded beyond the national wave, we track four numbers for
+                every race—keeping <strong>Mean-Adjusted</strong> as our default benchmark:
               </p>
 
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                 <div className="bg-white border border-stone-200 rounded p-4">
                   <p className="font-mono text-xs font-semibold text-[#1E3A8A]">
                     01 · Raw Diff. (2026 − 2024)
                   </p>
                   <p className="mt-1.5 text-stone-700 leading-relaxed text-xs sm:text-sm">
-                    Measures how far each state moved compared to its certified 2024 presidential
-                    vote—capturing the full election-night swing (averaging{' '}
+                    Full swing against 2024 presidential margins (averaging{' '}
                     <strong className="font-mono">+{unweightedAvg.toFixed(1)} pts</strong>).
                   </p>
                 </div>
 
-                <div className="bg-white border border-stone-200 rounded p-4">
+                <div className="bg-white border border-stone-300 rounded p-4">
                   <p className="font-mono text-xs font-semibold text-stone-900">
-                    02 · Mean-Adjusted (vs. Tide)
+                    02 · Mean-Adjusted (Default)
                   </p>
                   <p className="mt-1.5 text-stone-700 leading-relaxed text-xs sm:text-sm">
-                    Subtracts the national mean swing (<strong className="font-mono">+{unweightedAvg.toFixed(1)}</strong>{' '}
-                    unweighted / <strong className="font-mono">+{weightedAvg.toFixed(1)}</strong>{' '}
-                    weighted) so we see who outran the nationwide wave.
+                    Subtracts the national mean (<strong className="font-mono">+{unweightedAvg.toFixed(1)}</strong>{' '}
+                    state / <strong className="font-mono">+{weightedAvg.toFixed(1)}</strong>{' '}
+                    ballot-weighted) to isolate above-wave races.
+                  </p>
+                </div>
+
+                <div className="bg-white border border-stone-200 rounded p-4">
+                  <p className="font-mono text-xs font-semibold text-[#4338CA]">
+                    03 · Logit-Adj. (Potential Gain)
+                  </p>
+                  <p className="mt-1.5 text-stone-700 leading-relaxed text-xs sm:text-sm">
+                    Fits a log-odds curve (<code className="font-mono text-[11px]">L₂₆ = α + β·L₂₄</code>)
+                    so safe-blue ceilings and deep-red floors aren&apos;t misscored.
                   </p>
                 </div>
 
                 <div className="bg-white border border-stone-200 rounded p-4">
                   <p className="font-mono text-xs font-semibold text-[#0F766E]">
-                    03 · Demo-Adjusted (Tide + CVAP)
+                    04 · Demo-Adjusted (Tide + CVAP)
                   </p>
                   <p className="mt-1.5 text-stone-700 leading-relaxed text-xs sm:text-sm">
-                    Subtracts both the national mean and each state&apos;s{' '}
-                    <strong>demographic CVAP tilt</strong>—isolating performance beyond national
-                    group swings. (See Section 04.)
+                    Removes the wave plus each state&apos;s{' '}
+                    <strong>demographic CVAP tilt</strong>—separating candidate appeal from group
+                    rebounds.
                   </p>
                 </div>
               </div>
@@ -263,121 +352,98 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
               <div className="lg:col-span-8 prose-editorial space-y-5 max-w-2xl">
                 <p className="first-letter:text-5xl first-letter:font-display first-letter:font-bold first-letter:float-left first-letter:mr-3 first-letter:mt-1 first-letter:leading-none first-letter:text-stone-900">
-                  <strong>Here&apos;s how we start:</strong> Before comparing candidates across
-                  different regions, every state needs a common baseline. We anchor all{' '}
-                  <span className="font-mono text-sm tabular-nums">
-                    {STATEWIDE_RACES_2026.length}
-                  </span>{' '}
-                  contested November 3, 2026 Senate and Governor races—compiled from the{' '}
-                  <a
-                    href="https://apnews.com/hub/2026-midterm-election"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
-                  >
-                    Associated Press
-                  </a>
-                  ,{' '}
-                  <a
-                    href="https://results.decisiondeskhq.com/2026/general"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
-                  >
-                    Decision Desk HQ
-                  </a>
-                  , and{' '}
-                  <a
-                    href="https://ballotpedia.org/United_States_Senate_elections,_2026"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
-                  >
-                    Ballotpedia
-                  </a>
-                  —against certified 2024 presidential margins from the{' '}
-                  <a
-                    href="https://www.archives.gov/electoral-college/2024"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
-                  >
-                    National Archives
-                  </a>{' '}
-                  and{' '}
-                  <a
-                    href="https://www.presidency.ucsb.edu/statistics/elections/2024"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
-                  >
-                    UC Santa Barbara
-                  </a>
-                  .
-                </p>
-
-                <p>
-                  Measured against 2024, the average statewide shift toward Democrats (or non-GOP
-                  coalition challengers) reached{' '}
+                  Tuesday&apos;s{' '}
                   <strong className="font-semibold text-stone-900">
-                    +{unweightedAvg.toFixed(1)} points
+                    +{unweightedAvg.toFixed(1)}-point
                   </strong>{' '}
-                  unweighted (
-                  <strong className="font-semibold text-stone-900">
-                    +{weightedAvg.toFixed(1)} points
-                  </strong>{' '}
-                  weighted by ballots cast). Subtracting that national average from each
-                  race&apos;s raw swing normalizes away the tide itself—leaving behind the
-                  candidate-and-state gap we examine by ideological wing and policy stance (
+                  landslide swept a remarkably wide spectrum of Democrats into office—from centrist
+                  coalition builders like <strong>Roy Cooper</strong>, <strong>Rob Sand</strong>,
+                  and <strong>Josh Shapiro</strong>, to economic populists like{' '}
+                  <strong>James Talarico</strong> and <strong>Sherrod Brown</strong>, to
+                  progressive reformers like <strong>Troy Jackson</strong> and{' '}
+                  <strong>Abdul El-Sayed</strong> (alongside independent{' '}
+                  <strong>Dan Osborn</strong> and surviving Republicans like{' '}
+                  <strong>Byron Donalds</strong>). When a wave that large flips {flipCount} seats,
+                  every wing can claim vindication. By drilling into the variations from that
+                  average across all{' '}
                   <a
                     href="#sources"
+                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 text-stone-900"
+                  >
+                    <span className="font-mono text-sm tabular-nums">
+                      {STATEWIDE_RACES_2026.length}
+                    </span>{' '}
+                    Senate and Governor races
+                  </a>{' '}
+                  (which you can even reclassify by camp in{' '}
+                  <a
+                    href="#affiliations"
                     className="text-[#1E3A8A] underline underline-offset-4 font-sans text-sm"
                   >
-                    see aggregation details &amp; source links
+                    Section 03
                   </a>
-                  ).
+                  ), what do those gaps tell us about the candidates and policies American voters
+                  truly prefer—and how should that guide Democrats in 2028?
                 </p>
 
                 <p>
-                  Then we normalize one layer deeper. Exit analyses in{' '}
-                  <a
-                    href="https://www.washingtonpost.com/elections/interactive/2026/exit-polls-results-demographics/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
-                  >
-                    The Washington Post
-                  </a>
-                  ,{' '}
-                  <a
-                    href="https://www.brookings.edu/articles/the-midterm-effect-what-the-2026-election-could-mean-for-public-policy/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
-                  >
-                    Brookings
-                  </a>
-                  , and{' '}
-                  <a
-                    href="https://latino.ucla.edu/research/four-ways-latinos-shaped-the-2026-midterms/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
-                  >
-                    UCLA LPPI
-                  </a>{' '}
-                  show a massive national rebound among Hispanic, AAPI, and non-college voters. By
-                  building a state-by-state demographic estimator, we can ask a sharper question:
-                  how much of Texas&apos;s 25.7-point Senate swing was simply its 32.3% Latino
-                  electorate reverting to form—and how much was earned by the campaign itself?
+                  We look at <strong>Mean-Adjusted</strong> performance first simply because it is
+                  the cleanest starting evaluation: subtract the{' '}
+                  <strong className="font-mono">+{unweightedAvg.toFixed(1)}-point</strong>{' '}
+                  national wave and see who beat the tide. But two competing hypotheses test
+                  whether a flat national average still misses part of the picture:
                 </p>
+
+                <ol className="list-decimal pl-5 space-y-2.5 text-stone-800">
+                  <li>
+                    <strong>Can we separate demographic rebounds from candidate strength?</strong>{' '}
+                    Exit polls from{' '}
+                    <a
+                      href="https://www.washingtonpost.com/elections/interactive/2026/exit-polls-results-demographics/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
+                    >
+                      The Washington Post
+                    </a>
+                    ,{' '}
+                    <a
+                      href="https://www.brookings.edu/articles/the-midterm-effect-what-the-2026-election-could-mean-for-public-policy/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
+                    >
+                      Brookings
+                    </a>
+                    , and{' '}
+                    <a
+                      href="https://latino.ucla.edu/research/four-ways-latinos-shaped-the-2026-midterms/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-4 italic"
+                    >
+                      UCLA LPPI
+                    </a>{' '}
+                    show Hispanic and working-class voters snapping back sharply—so{' '}
+                    <strong>Demo-Adjusted</strong> strips out each state&apos;s CVAP composition to
+                    isolate individual appeal.
+                  </li>
+                  <li>
+                    <strong>How does potential ground gain change the story?</strong> Strangely
+                    enough, a +20-point gain in California is far harder to achieve than a
+                    +20-point gain in Texas because California already starts deeply Democratic and
+                    has fewer non-blue voters left to persuade. Using a{' '}
+                    <strong>Logit-Adjusted</strong> curve to account for that ceiling room shifts
+                    who truly underperformed—especially in safe states.
+                  </li>
+                </ol>
               </div>
 
             {/* Right Margin Notes Rail */}
             <aside className="lg:col-span-4 space-y-6 text-sm">
               <div className="p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
                 <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-                  Context Note 01 · Even Safe States Moved
+                  Context Note 01 · Safe States Shifted Too
                 </p>
                 <p className="mt-2 text-stone-700 leading-relaxed">
                   <a
@@ -397,29 +463,25 @@ export default function App() {
                   >
                     MultiState
                   </a>{' '}
-                  analyses note that even in safe Republican states that did not flip—such as West
-                  Virginia, Alabama, and Kentucky—GOP Senate winning margins compressed by 18 to
-                  21.5 points relative to 2024 presidential totals.
+                  note that GOP Senate margins in West Virginia, Alabama, and Kentucky compressed by
+                  19.4–21.5 pts vs. 2024 without flipping.
                 </p>
               </div>
 
               <div className="p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
                 <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-                  Context Note 02 · Who Shifted Nationally
+                  Context Note 02 · Policy Signals Over Labels
                 </p>
                 <p className="mt-2 text-stone-700 leading-relaxed">
-                  Post-election exit data cited by the{' '}
                   <a
                     href="https://www.americanprogress.org/article/working-class-voters-shifted-toward-democratic-and-independent-candidates-in-nearly-every-2026-senate-race/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-2 font-medium"
                   >
-                    Center for American Progress
+                    CAP
                   </a>{' '}
-                  indicates non-college-educated voters swung back toward Democratic and independent
-                  candidates in key Senate races, alongside a sharp rebound among Latino voters in
-                  Texas and Nevada (
+                  and{' '}
                   <a
                     href="https://www.brookings.edu/topics/2026-midterm-elections/"
                     target="_blank"
@@ -427,9 +489,9 @@ export default function App() {
                     className="underline decoration-stone-300 hover:decoration-[#1E3A8A] underline-offset-2"
                   >
                     Brookings
-                  </a>
-                  )—feeding directly into the Demographic-Adjusted Difference metric detailed in
-                  Sections 02 and 04.
+                  </a>{' '}
+                  show working-class and Latino rebounds across states—putting the focus on which
+                  concrete policies outperformed that wave.
                 </p>
               </div>
             </aside>
@@ -455,6 +517,7 @@ export default function App() {
           onChangeBenchmarkMode={setBenchmarkMode}
           nationalAvgShift={activeNationalAvgShift}
           demographicShifts={demographicShifts}
+          factionOverrides={factionOverrides}
           selectedStateCode={selectedStateCode}
           onSelectState={setSelectedStateCode}
         />
@@ -464,6 +527,7 @@ export default function App() {
           benchmarkMode={benchmarkMode}
           nationalAvgShift={activeNationalAvgShift}
           demographicShifts={demographicShifts}
+          factionOverrides={factionOverrides}
           selectedStateCode={selectedStateCode}
           onSelectState={setSelectedStateCode}
         />
@@ -473,6 +537,9 @@ export default function App() {
           benchmarkMode={benchmarkMode}
           nationalAvgShift={activeNationalAvgShift}
           demographicShifts={demographicShifts}
+          factionOverrides={factionOverrides}
+          onChangeFaction={handleChangeFaction}
+          onResetFactions={handleResetFactions}
           onSelectState={setSelectedStateCode}
         />
 
@@ -480,6 +547,7 @@ export default function App() {
         <DemographicStorySection
           benchmarkMode={benchmarkMode}
           nationalAvgShift={activeNationalAvgShift}
+          factionOverrides={factionOverrides}
           onSelectState={setSelectedStateCode}
         />
 
@@ -531,64 +599,86 @@ export default function App() {
               </div>
             </div>
             <p className="mt-4 text-sm text-stone-700 leading-relaxed max-w-4xl">
-              Once you subtract the{' '}
-              <strong className="font-mono">+{activeNationalAvgShift.toFixed(1)} pt</strong>{' '}
-              national tide, adding state-level CVAP demographics changes very little of the broader
-              picture: Mean-Adjusted and Demo-Adjusted scores track each other closely (
-              <strong className="font-mono">r = {modelConvergence.r.toFixed(2)}</strong>),{' '}
+              Once the <strong className="font-mono">+{activeNationalAvgShift.toFixed(1)} pt</strong>{' '}
+              national tide is removed, adding CVAP demographics barely changes the ranking (
+              <strong className="font-mono">r = {modelConvergence.r.toFixed(2)}</strong>):{' '}
               <strong className="font-mono">{modelConvergence.sameSignCount}</strong> of{' '}
-              <strong className="font-mono">{combinedMetrics.length}</strong> races keep the exact
-              same positive or negative sign, and{' '}
-              <strong className="font-mono">{modelConvergence.withinTwoCount}</strong> states shift
-              by two points or less. Where demographics do matter is explaining a handful of
-              high-Latino rebounds—trimming <strong>Texas</strong> (James Talarico from{' '}
+              <strong className="font-mono">{combinedMetrics.length}</strong> races keep the same
+              sign and <strong className="font-mono">{modelConvergence.withinTwoCount}</strong>{' '}
+              shift by 2.0 points or less. The main exception is high-Latino rebounds—trimming{' '}
+              <strong>Texas</strong> (Talarico{' '}
               <span className="font-mono">
                 {formatSignedMargin(txSenMetric?.afterMeanResidual ?? 10.5)}
               </span>{' '}
-              mean-adj. to{' '}
+              →{' '}
               <span className="font-mono">
                 {formatSignedMargin(txSenMetric?.adjustedDifference ?? 5.2)}
-              </span>{' '}
-              demo-adj.; Gina Hinojosa from{' '}
+              </span>
+              ; Hinojosa{' '}
               <span className="font-mono">
                 {formatSignedMargin(txGovMetric?.afterMeanResidual ?? 5.5)}
               </span>{' '}
-              to{' '}
+              →{' '}
               <span className="font-mono">
                 {formatSignedMargin(txGovMetric?.adjustedDifference ?? 0.2)}
               </span>
-              ), <strong>New Mexico</strong> (
+              ) and <strong>New Mexico</strong> (
               <span className="font-mono">
                 {formatSignedMargin(nmSenMetric?.afterMeanResidual ?? 5.3)}
               </span>{' '}
-              to{' '}
+              →{' '}
               <span className="font-mono">
                 {formatSignedMargin(nmSenMetric?.adjustedDifference ?? -2.3)}
               </span>
-              ), and <strong>California</strong> (
-              <span className="font-mono">
-                {formatSignedMargin(caGovMetric?.afterMeanResidual ?? -4.3)}
-              </span>{' '}
-              to{' '}
-              <span className="font-mono">
-                {formatSignedMargin(caGovMetric?.adjustedDifference ?? -10.0)}
-              </span>
-              )—while giving modest extra credit to predominantly White states like{' '}
-              <strong>Iowa</strong> (
+              )—while crediting White-majority states like <strong>Iowa</strong> (
               <span className="font-mono">
                 {formatSignedMargin(iaGovMetric?.afterMeanResidual ?? 9.0)}
               </span>{' '}
-              to{' '}
+              →{' '}
               <span className="font-mono">
                 {formatSignedMargin(iaGovMetric?.adjustedDifference ?? 11.1)}
               </span>
-              ) and <strong>West Virginia</strong> (
+              ). Separately, our <strong>Logit-Adjusted (Potential Gain)</strong> curve adjusts for
+              where states started—lifting safe-blue incumbents with limited ceiling room (
+              <strong>MA-Sen</strong>{' '}
+              <span className="font-mono">
+                {formatSignedMargin(maSenMetric?.afterMeanResidual ?? -9.2)}
+              </span>{' '}
+              mean →{' '}
+              <span className="font-mono text-[#4338CA]">
+                {formatSignedMargin(maSenMetric?.logitAdjustedResidual ?? -3.1)}
+              </span>{' '}
+              logit; <strong>CA-Gov</strong>{' '}
+              <span className="font-mono">
+                {formatSignedMargin(caGovMetric?.afterMeanResidual ?? -4.3)}
+              </span>{' '}
+              →{' '}
+              <span className="font-mono text-[#4338CA]">
+                {formatSignedMargin(caGovMetric?.logitAdjustedResidual ?? 0.7)}
+              </span>
+              ; <strong>NY-Gov</strong>{' '}
+              <span className="font-mono">
+                {formatSignedMargin(nyGovMetric?.afterMeanResidual ?? -8.2)}
+              </span>{' '}
+              →{' '}
+              <span className="font-mono text-[#4338CA]">
+                {formatSignedMargin(nyGovMetric?.logitAdjustedResidual ?? -4.8)}
+              </span>
+              ) and trimming routine deep-red compression (<strong>WV-Sen</strong>{' '}
               <span className="font-mono">
                 {formatSignedMargin(wvSenMetric?.afterMeanResidual ?? 6.2)}
               </span>{' '}
-              to{' '}
+              →{' '}
               <span className="font-mono">
-                {formatSignedMargin(wvSenMetric?.adjustedDifference ?? 9.2)}
+                {formatSignedMargin(wvSenMetric?.logitAdjustedResidual ?? 1.8)}
+              </span>
+              ; <strong>OK-Sen</strong>{' '}
+              <span className="font-mono">
+                {formatSignedMargin(okSenMetric?.afterMeanResidual ?? 1.7)}
+              </span>{' '}
+              →{' '}
+              <span className="font-mono">
+                {formatSignedMargin(okSenMetric?.logitAdjustedResidual ?? -2.2)}
               </span>
               ).
             </p>
@@ -611,17 +701,21 @@ export default function App() {
                   Voters most strongly rewarded tangible, local economic fights:{' '}
                   <strong>Trade &amp; Tariffs</strong> led every issue pillar (
                   <strong className="font-mono">
-                    {formatSignedMargin(tradePolicy?.avgCombinedAdjustedResidual ?? 5.8)}
+                    {formatSignedMargin(tradePolicy?.avgResidual ?? 4.4)}
                   </strong>{' '}
-                  demo-adj., {tradePolicy?.flips ?? 4} flips in 5 races), followed by{' '}
+                  mean-adj. /{' '}
+                  <span className="font-mono">
+                    {formatSignedMargin(tradePolicy?.avgLogitAdjustedResidual ?? 3.1)}
+                  </span>{' '}
+                  logit, {tradePolicy?.flips ?? 4} flips in 5 races), followed by{' '}
                   <strong>Public Education &amp; Anti-Voucher</strong> (
                   <strong className="font-mono">
-                    {formatSignedMargin(eduPolicy?.avgCombinedAdjustedResidual ?? 1.8)}
+                    {formatSignedMargin(eduPolicy?.avgResidual ?? 2.1)}
                   </strong>
                   , {eduPolicy?.flips ?? 7} flips) and{' '}
                   <strong>Anti-Corruption &amp; Accountability</strong> (
                   <strong className="font-mono">
-                    {formatSignedMargin(antiCorrPolicy?.avgCombinedAdjustedResidual ?? 1.4)}
+                    {formatSignedMargin(antiCorrPolicy?.avgResidual ?? 1.4)}
                   </strong>
                   ).
                 </p>
@@ -636,36 +730,51 @@ export default function App() {
                   <strong className="font-mono">{costPolicy?.count ?? 38}</strong> of{' '}
                   {STATEWIDE_RACES_2026.length} tracked campaigns and posted a near-baseline{' '}
                   <strong className="font-mono">
-                    {formatSignedMargin(costPolicy?.avgCombinedAdjustedResidual ?? 0.5)}
+                    {formatSignedMargin(costPolicy?.avgResidual ?? 0.5)}
                   </strong>{' '}
-                  demo-adj. average—serving as universal entry stakes across the map rather than a
+                  mean-adj. average—serving as universal entry stakes across the map rather than a
                   separating advantage on its own.
                 </p>
               </div>
 
               <div className="p-4 bg-[#F7F4EE] border border-stone-200 rounded">
                 <p className="text-xs font-mono font-semibold text-[#9A3412]">
-                  Lagged the Wave · Factional &amp; Safe-State Brands
+                  Lagged the Wave · Potential Gain Separates Camps
                 </p>
                 <p className="mt-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
-                  <strong>Pragmatic Center-Left</strong> (
+                  On Mean-Adjusted, <strong>Economic Populist &amp; Labor</strong> (
                   <strong className="font-mono">
-                    {formatSignedMargin(ctrAgg?.avgCombinedAdjustedResidual ?? 1.4)}
+                    {formatSignedMargin(popAgg?.avgResidual ?? 2.0)}
+                  </strong>
+                  ) and <strong>Pragmatic Center-Left</strong> (
+                  <strong className="font-mono">
+                    {formatSignedMargin(ctrAgg?.avgResidual ?? 1.9)}
+                  </strong>
+                  ) tie—but <strong>Logit-Adjusted</strong> puts Center-Left ahead (
+                  <strong className="font-mono text-[#4338CA]">
+                    {formatSignedMargin(ctrAgg?.avgLogitAdjustedResidual ?? 2.8)}
                   </strong>{' '}
-                  demo-adj., 8 flips) and <strong>Economic Populist &amp; Labor</strong> (
-                  <strong className="font-mono">
-                    {formatSignedMargin(popAgg?.avgCombinedAdjustedResidual ?? 1.1)}
-                  </strong>
-                  , 4 flips) performed nearly identically. Meanwhile{' '}
-                  <strong>Labor &amp; Anti-Monopoly</strong> (
-                  <strong className="font-mono">
-                    {formatSignedMargin(laborPolicy?.avgCombinedAdjustedResidual ?? -3.4)}
-                  </strong>
+                  vs.{' '}
+                  <span className="font-mono">
+                    {formatSignedMargin(popAgg?.avgLogitAdjustedResidual ?? 1.1)}
+                  </span>
+                  ) and flips <strong>GOP Resilience</strong> negative (
+                  <span className="font-mono">
+                    {formatSignedMargin(gopAgg?.avgLogitAdjustedResidual ?? -1.4)}
+                  </span>
+                  ). <strong>Labor &amp; Anti-Monopoly</strong> (
+                  <span className="font-mono">
+                    {formatSignedMargin(laborPolicy?.avgResidual ?? -4.4)}
+                  </span>
                   ) and <strong>Progressive Reformer</strong> (
-                  <strong className="font-mono">
-                    {formatSignedMargin(progAgg?.avgCombinedAdjustedResidual ?? -9.7)}
-                  </strong>
-                  ) trailed the tide, weighed down by flat margins in safe blue states.
+                  <span className="font-mono">
+                    {formatSignedMargin(progAgg?.avgResidual ?? -11.2)}
+                  </span>{' '}
+                  mean /{' '}
+                  <span className="font-mono">
+                    {formatSignedMargin(progAgg?.avgLogitAdjustedResidual ?? -8.1)}
+                  </span>{' '}
+                  logit) trailed both benchmarks.
                 </p>
               </div>
             </div>
@@ -673,138 +782,432 @@ export default function App() {
 
           {/* 3. Biggest Winners & Biggest Losers */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white border border-stone-200 rounded-lg p-6">
-              <p className="font-mono text-xs font-semibold text-[#0F766E]">
-                Finding 03 · Biggest Winners
-              </p>
-              <h3 className="text-lg font-display font-semibold text-stone-900 mt-1">
-                Top Overperformers &amp; Defining Victories
-              </h3>
-              <p className="mt-2 text-xs sm:text-sm text-stone-600 leading-relaxed">
-                Democrats flipped <strong className="font-mono">{flipCount}</strong> statewide
-                seats—headlined by <strong>James Talarico</strong>&apos;s cycle-high{' '}
-                <span className="font-mono">+25.7</span> raw swing in Texas,{' '}
-                <strong>Roy Cooper</strong> (+22.9) in North Carolina, and{' '}
-                <strong>Annie Andrews</strong> (+22.5) in South Carolina. Adjusted for wave and
-                demographics, Midwestern and Rust Belt standouts <strong>Rob Sand</strong> (IA-Gov)
-                and <strong>Josh Shapiro</strong> (PA-Gov) led the entire field, while{' '}
-                <strong>Byron Donalds</strong> (FL-Gov, R+1.3) and <strong>Ashley Moody</strong>{' '}
-                (FL-SEN, R+3.0) notched rare GOP holds in Florida.
-              </p>
-
-              <div className="mt-4 border border-stone-200 rounded overflow-hidden">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-[#F7F4EE] border-b border-stone-200 text-stone-500">
-                    <tr>
-                      <th className="py-2 px-3 font-medium">Top Demo-Adjusted Performers</th>
-                      <th className="py-2 px-2.5 font-medium text-right">Raw</th>
-                      <th className="py-2 px-2.5 font-medium text-right">Mean-Adj.</th>
-                      <th className="py-2 px-3 font-medium text-right">Demo-Adj.</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-200">
-                    {topOverperformers.map((row) => (
-                      <tr
-                        key={row.race.id}
-                        onClick={() => {
-                          setSelectedStateCode(row.race.stateCode);
-                          document.getElementById('state-map')?.scrollIntoView({ behavior: 'smooth' });
-                        }}
-                        className="hover:bg-stone-50 cursor-pointer"
+            <div className="bg-white border border-stone-200 rounded-lg p-6 flex flex-col justify-between">
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-mono text-xs font-semibold text-[#0F766E]">
+                    Finding 03 · Biggest Winners (
+                    {SUMMARY_METRIC_OPTIONS.find((o) => o.id === winnersSortMetric)?.label})
+                  </p>
+                  <div
+                    className="inline-flex items-center p-0.5 bg-[#EFECE5] border border-stone-200 rounded"
+                    role="group"
+                    aria-label="Sort Biggest Winners by metric"
+                  >
+                    {SUMMARY_METRIC_OPTIONS.map((opt) => (
+                      <button
+                        key={`win-${opt.id}`}
+                        type="button"
+                        onClick={() => setWinnersSortMetric(opt.id)}
+                        className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap cursor-pointer ${
+                          winnersSortMetric === opt.id
+                            ? 'bg-stone-900 text-[#FBF9F5]'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
                       >
-                        <td className="py-2 px-3">
-                          <span className="font-semibold text-stone-900">
-                            {row.race.stateCode} {row.race.office === 'Senate' ? 'Sen' : 'Gov'} ·{' '}
-                            {row.race.featuredCandidate}
-                          </span>
-                          <span className="block text-[11px] text-stone-500">
-                            {row.race.flipped
-                              ? 'Flipped seat (D)'
-                              : row.race.id === 'WV-SEN'
-                                ? 'R hold, 21.5-pt D margin compression'
-                                : 'Incumbent party hold'}
-                          </span>
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono tabular-nums text-[#1E3A8A]">
-                          {formatSignedMargin(row.rawShift)}
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono tabular-nums text-stone-700">
-                          {formatSignedMargin(row.afterMeanResidual)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-semibold tabular-nums text-[#0F766E]">
-                          {formatSignedMargin(row.adjustedDifference)}
-                        </td>
-                      </tr>
+                        {opt.label}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </div>
+                <h3 className="text-lg font-display font-semibold text-stone-900 mt-1.5">
+                  Top Overperformers &amp; Defining Victories
+                </h3>
+                <p className="mt-2 text-xs sm:text-sm text-stone-600 leading-relaxed">
+                  {winnersSortMetric === 'mean' && (
+                    <>
+                      Democrats flipped <strong className="font-mono">{flipCount}</strong> statewide
+                      seats—headlined by <strong>James Talarico</strong>&apos;s cycle-high{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(txSenMetric?.rawShift ?? 25.7)}
+                      </span>{' '}
+                      raw /{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(txSenMetric?.afterMeanResidual ?? 10.5)}
+                      </span>{' '}
+                      mean-adjusted swing in Texas, alongside <strong>Rob Sand</strong> (IA-Gov,{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(iaGovMetric?.afterMeanResidual ?? 9.0)}
+                      </span>
+                      ), <strong>Josh Shapiro</strong> (PA-Gov,{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(paGovMetric?.afterMeanResidual ?? 8.7)}
+                      </span>
+                      ), and <strong>Roy Cooper</strong> (NC-Sen,{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(ncSenMetric?.afterMeanResidual ?? 7.6)}
+                      </span>
+                      ). Switch above to see how ceiling room or CVAP tilt reorders this top five.
+                    </>
+                  )}
+                  {winnersSortMetric === 'logit' && (
+                    <>
+                      Adjusted for ceiling room on the Logit potential-gain curve,{' '}
+                      <strong>Jack Reed</strong> (RI-Sen,{' '}
+                      <span className="font-mono text-[#4338CA]">
+                        {formatSignedMargin(riSenMetric?.logitAdjustedResidual ?? 12.0)}
+                      </span>
+                      ) moves to #1 for expanding a D+13.8 seat to D+37.5, followed by{' '}
+                      <strong>Josh Shapiro</strong> (PA-Gov,{' '}
+                      <span className="font-mono text-[#4338CA]">
+                        {formatSignedMargin(paGovMetric?.logitAdjustedResidual ?? 9.3)}
+                      </span>
+                      ), <strong>James Talarico</strong> (TX-Sen,{' '}
+                      <span className="font-mono text-[#4338CA]">
+                        {formatSignedMargin(txSenMetric?.logitAdjustedResidual ?? 9.0)}
+                      </span>
+                      ), and <strong>Cory Booker</strong> (NJ-Sen).
+                    </>
+                  )}
+                  {winnersSortMetric === 'adjusted' && (
+                    <>
+                      Subtracting each state&apos;s CVAP demographic tailwind elevates{' '}
+                      <strong>Rob Sand</strong> (IA-Gov,{' '}
+                      <span className="font-mono text-[#0F766E]">
+                        {formatSignedMargin(iaGovMetric?.adjustedDifference ?? 11.1)}
+                      </span>
+                      ) to #1 and pulls <strong>West Virginia</strong> (WV-Sen,{' '}
+                      <span className="font-mono text-[#0F766E]">
+                        {formatSignedMargin(wvSenMetric?.adjustedDifference ?? 9.2)}
+                      </span>
+                      ) and <strong>South Carolina</strong> into the top five, while trimming{' '}
+                      <strong>James Talarico</strong> (
+                      <span className="font-mono">
+                        {formatSignedMargin(txSenMetric?.adjustedDifference ?? 5.2)}
+                      </span>
+                      ) due to Texas&apos;s{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(txSenMetric?.demographicWeight ?? 5.3)}
+                      </span>{' '}
+                      Latino rebound tailwind.
+                    </>
+                  )}
+                  {winnersSortMetric === 'raw' && (
+                    <>
+                      Measured by unadjusted swing vs. 2024 presidential margins, the top five
+                      matches <strong>Mean-Adjusted</strong> exactly—led by{' '}
+                      <strong>TX-Sen</strong> (
+                      <span className="font-mono text-[#1E3A8A]">
+                        {formatSignedMargin(txSenMetric?.rawShift ?? 25.7)}
+                      </span>
+                      ), <strong>IA-Gov</strong> (
+                      <span className="font-mono text-[#1E3A8A]">
+                        {formatSignedMargin(iaGovMetric?.rawShift ?? 24.3)}
+                      </span>
+                      ), and <strong>PA-Gov</strong> (
+                      <span className="font-mono text-[#1E3A8A]">
+                        {formatSignedMargin(paGovMetric?.rawShift ?? 24.0)}
+                      </span>
+                      )—because subtracting a single national mean preserves the exact order.
+                    </>
+                  )}
+                </p>
+
+                <div className="mt-4 border border-stone-200 rounded overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-[#F7F4EE] border-b border-stone-200 text-stone-500">
+                      <tr>
+                        <th className="py-2 px-3 font-medium">
+                          Top 5 by {SUMMARY_METRIC_OPTIONS.find((o) => o.id === winnersSortMetric)?.label}
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            winnersSortMetric === 'mean' ? 'font-semibold text-stone-900' : 'font-medium'
+                          }`}
+                        >
+                          Mean-Adj.
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            winnersSortMetric === 'logit' ? 'font-semibold text-[#4338CA]' : 'font-medium'
+                          }`}
+                        >
+                          Logit-Adj.
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            winnersSortMetric === 'raw' ? 'font-semibold text-[#1E3A8A]' : 'font-medium'
+                          }`}
+                        >
+                          Raw
+                        </th>
+                        <th
+                          className={`py-2 px-3 text-right ${
+                            winnersSortMetric === 'adjusted' ? 'font-semibold text-[#0F766E]' : 'font-medium'
+                          }`}
+                        >
+                          Demo-Adj.
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {topOverperformers.map((row) => (
+                        <tr
+                          key={row.race.id}
+                          onClick={() => {
+                            setSelectedStateCode(row.race.stateCode);
+                            document.getElementById('state-map')?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className="hover:bg-stone-50 cursor-pointer"
+                        >
+                          <td className="py-2 px-3">
+                            <span className="font-semibold text-stone-900">
+                              {row.race.stateCode} {row.race.office === 'Senate' ? 'Sen' : 'Gov'} ·{' '}
+                              {row.race.featuredCandidate}
+                            </span>
+                            <span className="block text-[11px] text-stone-500">
+                              {row.race.flipped
+                                ? 'Flipped seat (D)'
+                                : row.race.demOrCoalitionMargin2026 < 0
+                                  ? `R hold, ${Math.abs(row.rawShift).toFixed(1)}-pt D compression`
+                                  : 'Incumbent party hold'}
+                            </span>
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              winnersSortMetric === 'mean'
+                                ? 'font-semibold text-[#0F766E] bg-[#F5F2EB]/60'
+                                : 'text-stone-700'
+                            }`}
+                          >
+                            {formatSignedMargin(row.afterMeanResidual)}
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              winnersSortMetric === 'logit'
+                                ? 'font-semibold text-[#4338CA] bg-[#F5F2EB]/60'
+                                : 'text-[#4338CA]'
+                            }`}
+                          >
+                            {formatSignedMargin(row.logitAdjustedResidual)}
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              winnersSortMetric === 'raw'
+                                ? 'font-semibold text-[#1E3A8A] bg-[#F5F2EB]/60'
+                                : 'text-[#1E3A8A]'
+                            }`}
+                          >
+                            {formatSignedMargin(row.rawShift)}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right font-mono tabular-nums ${
+                              winnersSortMetric === 'adjusted'
+                                ? 'font-semibold text-[#0F766E] bg-[#F5F2EB]/60'
+                                : 'text-stone-700'
+                            }`}
+                          >
+                            {formatSignedMargin(row.adjustedDifference)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
-            <div className="bg-white border border-stone-200 rounded-lg p-6">
-              <p className="font-mono text-xs font-semibold text-[#9A3412]">
-                Finding 04 · Biggest Losers
-              </p>
-              <h3 className="text-lg font-display font-semibold text-stone-900 mt-1">
-                Steepest Underperformers &amp; Lost Seats
-              </h3>
-              <p className="mt-2 text-xs sm:text-sm text-stone-600 leading-relaxed">
-                On the seat ledger, Republicans lost <strong className="font-mono">{flipCount}</strong>{' '}
-                tracked Senate and Governor seats, including high-profile defeats for{' '}
-                <strong>Ken Paxton</strong> (TX-Sen) and five-term incumbent{' '}
-                <strong>Susan Collins</strong> (ME-Sen). On the benchmark ledger, safe-blue and
-                sluggish campaigns missed the{' '}
-                <span className="font-mono">+{activeNationalAvgShift.toFixed(1)}</span> national wave
-                by wide margins—including <strong>OR-Sen</strong>, <strong>NY-Gov</strong>,{' '}
-                <strong>CA-Gov</strong>, <strong>MA-Sen</strong>, and Michigan Senate winner{' '}
-                <strong>Abdul El-Sayed</strong> (<span className="font-mono">+8.4</span> raw /{' '}
-                <span className="font-mono">-5.2</span> demo-adj.).
-              </p>
-
-              <div className="mt-4 border border-stone-200 rounded overflow-hidden">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-[#F7F4EE] border-b border-stone-200 text-stone-500">
-                    <tr>
-                      <th className="py-2 px-3 font-medium">Widest Negative Residuals</th>
-                      <th className="py-2 px-2.5 font-medium text-right">Raw</th>
-                      <th className="py-2 px-2.5 font-medium text-right">Mean-Adj.</th>
-                      <th className="py-2 px-3 font-medium text-right">Demo-Adj.</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-200">
-                    {widestUnderperformers.map((row) => (
-                      <tr
-                        key={row.race.id}
-                        onClick={() => {
-                          setSelectedStateCode(row.race.stateCode);
-                          document.getElementById('state-map')?.scrollIntoView({ behavior: 'smooth' });
-                        }}
-                        className="hover:bg-stone-50 cursor-pointer"
+            <div className="bg-white border border-stone-200 rounded-lg p-6 flex flex-col justify-between">
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-mono text-xs font-semibold text-[#9A3412]">
+                    Finding 04 · Biggest Losers (
+                    {SUMMARY_METRIC_OPTIONS.find((o) => o.id === losersSortMetric)?.label})
+                  </p>
+                  <div
+                    className="inline-flex items-center p-0.5 bg-[#EFECE5] border border-stone-200 rounded"
+                    role="group"
+                    aria-label="Sort Biggest Losers by metric"
+                  >
+                    {SUMMARY_METRIC_OPTIONS.map((opt) => (
+                      <button
+                        key={`lose-${opt.id}`}
+                        type="button"
+                        onClick={() => setLosersSortMetric(opt.id)}
+                        className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap cursor-pointer ${
+                          losersSortMetric === opt.id
+                            ? 'bg-stone-900 text-[#FBF9F5]'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
                       >
-                        <td className="py-2 px-3">
-                          <span className="font-semibold text-stone-900">
-                            {row.race.stateCode} {row.race.office === 'Senate' ? 'Sen' : 'Gov'} ·{' '}
-                            {row.race.featuredCandidate}
-                          </span>
-                          <span className="block text-[11px] text-stone-500">
-                            {row.race.id === 'ME-SEN'
-                              ? 'Unseated Collins (R) despite −0.6 vs. 2024'
-                              : 'Safe-blue win below national wave'}
-                          </span>
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono tabular-nums text-[#1E3A8A]">
-                          {formatSignedMargin(row.rawShift)}
-                        </td>
-                        <td className="py-2 px-2.5 text-right font-mono tabular-nums text-stone-700">
-                          {formatSignedMargin(row.afterMeanResidual)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-semibold tabular-nums text-[#9A3412]">
-                          {formatSignedMargin(row.adjustedDifference)}
-                        </td>
-                      </tr>
+                        {opt.label}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </div>
+                <h3 className="text-lg font-display font-semibold text-stone-900 mt-1.5">
+                  {losersSortMetric === 'logit'
+                    ? 'Steepest Underperformers Relative to Achievable Ground'
+                    : losersSortMetric === 'adjusted'
+                      ? 'Bottom Five After Removing Wave & Demographic Tailwinds'
+                      : 'Bottom Five Under Flat National Wave Subtraction'}
+                </h3>
+                <p className="mt-2 text-xs sm:text-sm text-stone-600 leading-relaxed">
+                  {losersSortMetric === 'logit' && (
+                    <>
+                      For Biggest Losers, linear wave subtraction unfairly penalizes safe-blue
+                      winners like <strong>MA-Sen</strong> (D+25.2 → D+31.3) and{' '}
+                      <strong>NY-Gov</strong> (D+12.6 → D+19.7) who lacked +15 pts of ceiling room.{' '}
+                      <strong>Logit-Adjusted</strong> clears both out of the bottom five (to{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(maSenMetric?.logitAdjustedResidual ?? -3.1)}
+                      </span>{' '}
+                      and{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(nyGovMetric?.logitAdjustedResidual ?? -4.8)}
+                      </span>
+                      ) and spotlights races that left achievable ground behind.
+                    </>
+                  )}
+                  {losersSortMetric === 'mean' && (
+                    <>
+                      Under flat <strong>Mean-Adjusted</strong> wave subtraction, safe-blue holds{' '}
+                      <strong>MA-Sen</strong> (
+                      <span className="font-mono text-[#9A3412]">
+                        {formatSignedMargin(maSenMetric?.afterMeanResidual ?? -9.2)}
+                      </span>
+                      ) and <strong>NY-Gov</strong> (
+                      <span className="font-mono text-[#9A3412]">
+                        {formatSignedMargin(nyGovMetric?.afterMeanResidual ?? -8.2)}
+                      </span>
+                      ) drop into the bottom five alongside <strong>ME-Sen</strong>,{' '}
+                      <strong>OR-Sen</strong>, and <strong>MN-Sen</strong>—illustrating why
+                      potential ground gain changes who looks like a loser.
+                    </>
+                  )}
+                  {losersSortMetric === 'adjusted' && (
+                    <>
+                      Adding CVAP demographics pulls <strong>CA-Gov</strong> (
+                      <span className="font-mono text-[#9A3412]">
+                        {formatSignedMargin(caGovMetric?.adjustedDifference ?? -10.0)}
+                      </span>
+                      ) into the bottom five alongside <strong>OR-Sen</strong>,{' '}
+                      <strong>ME-Sen</strong>, <strong>NY-Gov</strong>, and <strong>MA-Sen</strong>
+                      —since California&apos;s diverse CVAP predicts a{' '}
+                      <span className="font-mono">
+                        {formatSignedMargin(caGovMetric?.demographicWeight ?? 5.8)}
+                      </span>{' '}
+                      tailwind on top of the national wave, even though D+20.2 leaves limited room.
+                    </>
+                  )}
+                  {losersSortMetric === 'raw' && (
+                    <>
+                      Sorted by unadjusted swing vs. 2024, only <strong>ME-Sen</strong> (
+                      <span className="font-mono text-[#9A3412]">
+                        {formatSignedMargin(
+                          widestUnderperformers[0]?.rawShift ?? -0.6
+                        )}
+                      </span>
+                      , still unseating Susan Collins) moved backward vs. Harris, while{' '}
+                      <strong>OR-Sen</strong>, <strong>MN-Sen</strong>, <strong>MA-Sen</strong>,
+                      and <strong>NY-Gov</strong> posted modest gains below the +{activeNationalAvgShift.toFixed(1)}-pt wave.
+                    </>
+                  )}
+                </p>
+
+                <div className="mt-4 border border-stone-200 rounded overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-[#F7F4EE] border-b border-stone-200 text-stone-500">
+                      <tr>
+                        <th className="py-2 px-3 font-medium">
+                          Bottom 5 by {SUMMARY_METRIC_OPTIONS.find((o) => o.id === losersSortMetric)?.label}
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            losersSortMetric === 'logit' ? 'font-semibold text-[#9A3412]' : 'font-medium'
+                          }`}
+                        >
+                          Logit-Adj.
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            losersSortMetric === 'mean' ? 'font-semibold text-[#9A3412]' : 'font-medium'
+                          }`}
+                        >
+                          Mean-Adj.
+                        </th>
+                        <th
+                          className={`py-2 px-2 text-right ${
+                            losersSortMetric === 'raw' ? 'font-semibold text-[#9A3412]' : 'font-medium'
+                          }`}
+                        >
+                          Raw
+                        </th>
+                        <th
+                          className={`py-2 px-3 text-right ${
+                            losersSortMetric === 'adjusted' ? 'font-semibold text-[#9A3412]' : 'font-medium'
+                          }`}
+                        >
+                          Demo-Adj.
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {widestUnderperformers.map((row) => (
+                        <tr
+                          key={row.race.id}
+                          onClick={() => {
+                            setSelectedStateCode(row.race.stateCode);
+                            document.getElementById('state-map')?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className="hover:bg-stone-50 cursor-pointer"
+                        >
+                          <td className="py-2 px-3">
+                            <span className="font-semibold text-stone-900">
+                              {row.race.stateCode} {row.race.office === 'Senate' ? 'Sen' : 'Gov'} ·{' '}
+                              {row.race.featuredCandidate}
+                            </span>
+                            <span className="block text-[11px] text-stone-500">
+                              {row.race.id === 'ME-SEN'
+                                ? 'Unseated Collins (R) despite −0.6 vs. 2024'
+                                : losersSortMetric === 'logit'
+                                  ? `Expected ${row.logitExpectedShift.toFixed(1)}-pt logit gain`
+                                  : losersSortMetric === 'adjusted'
+                                    ? `CVAP tilt ${formatSignedMargin(row.demographicWeight)} pts`
+                                    : `2024: ${row.race.presMargin2024 >= 0 ? `D+${row.race.presMargin2024.toFixed(1)}` : `R+${Math.abs(row.race.presMargin2024).toFixed(1)}`}`}
+                            </span>
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              losersSortMetric === 'logit'
+                                ? 'font-semibold text-[#9A3412] bg-[#F5F2EB]/60'
+                                : 'text-stone-700'
+                            }`}
+                          >
+                            {formatSignedMargin(row.logitAdjustedResidual)}
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              losersSortMetric === 'mean'
+                                ? 'font-semibold text-[#9A3412] bg-[#F5F2EB]/60'
+                                : 'text-stone-700'
+                            }`}
+                          >
+                            {formatSignedMargin(row.afterMeanResidual)}
+                          </td>
+                          <td
+                            className={`py-2 px-2 text-right font-mono tabular-nums ${
+                              losersSortMetric === 'raw'
+                                ? 'font-semibold text-[#9A3412] bg-[#F5F2EB]/60'
+                                : 'text-[#1E3A8A]'
+                            }`}
+                          >
+                            {formatSignedMargin(row.rawShift)}
+                          </td>
+                          <td
+                            className={`py-2 px-3 text-right font-mono tabular-nums ${
+                              losersSortMetric === 'adjusted'
+                                ? 'font-semibold text-[#9A3412] bg-[#F5F2EB]/60'
+                                : 'text-stone-700'
+                            }`}
+                          >
+                            {formatSignedMargin(row.adjustedDifference)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -820,74 +1223,70 @@ export default function App() {
               Think We Missed Something? Source Code Is Open and Revisions Are Welcome
             </h2>
             <p className="text-sm text-stone-600 mt-2 leading-relaxed">
-              Electoral analysis should never be a black box. Every 2024 baseline, 2026 vote share,
-              CVAP demographic weight, and faction tag behind this article lives in standalone code
-              so journalists, researchers, and readers can inspect the math—or challenge it.
+              Every 2024 baseline, 2026 vote share, CVAP weight, and camp tag lives in standalone code
+              so anyone can audit or challenge the math.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white border border-stone-200 rounded-lg p-6">
               <p className="font-mono text-xs font-semibold text-[#1E3A8A]">
-                01 · Auditable Analytical Engine
+                01 · Auditable Engine
               </p>
               <h3 className="text-lg font-display font-semibold text-stone-900 mt-1.5">
                 Pure Code, Zero Black Boxes
               </h3>
               <p className="mt-2 text-sm text-stone-700 leading-relaxed">
-                All calculations are separated from the React layout inside{' '}
+                All math sits in{' '}
                 <code className="font-mono text-xs bg-[#F5F2EB] px-1.5 py-0.5 rounded border border-stone-200">
                   src/analysis/
                 </code>{' '}
                 (<code className="font-mono text-xs">datasets.ts</code>,{' '}
                 <code className="font-mono text-xs">shiftModel.ts</code>,{' '}
-                <code className="font-mono text-xs">demographicModel.ts</code>). You can inspect
-                every formula directly or export the full computed dataset as JSON in Section 04.
+                <code className="font-mono text-xs">demographicModel.ts</code>), with full JSON
+                exports in Sections 03 and 04.
               </p>
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
               <p className="font-mono text-xs font-semibold text-[#0F766E]">
-                02 · Built to Be Stress-Tested
+                02 · Built to Extend
               </p>
               <h3 className="text-lg font-display font-semibold text-stone-900 mt-1.5">
-                Swap Assumptions or Extend the Map
+                Swap Assumptions or Add Races
               </h3>
               <p className="mt-2 text-sm text-stone-700 leading-relaxed">
-                Want to test how alternative Latino or White turnout assumptions change Texas and
-                Iowa? Swap the vector in{' '}
+                Adjust the exit-poll vector in{' '}
                 <code className="font-mono text-xs bg-[#F5F2EB] px-1.5 py-0.5 rounded border border-stone-200">
                   demographicModel.ts
                 </code>{' '}
-                or extend the raw arrays in{' '}
+                or add House districts and county canvases directly inside{' '}
                 <code className="font-mono text-xs bg-[#F5F2EB] px-1.5 py-0.5 rounded border border-stone-200">
                   datasets.ts
-                </code>{' '}
-                to plug in U.S. House districts, county canvases, or 2028 primary models.
+                </code>
+                .
               </p>
             </div>
 
             <div className="bg-white border border-stone-200 rounded-lg p-6">
               <p className="font-mono text-xs font-semibold text-[#9A3412]">
-                03 · Living Electoral Ledger
+                03 · Living Ledger
               </p>
               <h3 className="text-lg font-display font-semibold text-stone-900 mt-1.5">
                 Revisions &amp; Counter-Models Welcome
               </h3>
               <p className="mt-2 text-sm text-stone-700 leading-relaxed">
-                Spot an updated certified canvass margin, think a candidate belongs in a different
-                ideological lane, or see a policy pillar we overlooked? Because the source code and
-                primary citations are open, revisions, alternative tags, and counter-analyses are
-                explicitly encouraged.
+                Spot an updated canvass or prefer different ideological tags? Reassign camps live in
+                Section 03 or propose revisions directly against the source.
               </p>
             </div>
           </div>
 
           <div className="mt-6 p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg flex flex-wrap items-center justify-between gap-4">
             <p className="text-xs sm:text-sm text-stone-700">
-              <strong className="font-semibold text-stone-900">Want to verify a specific number?</strong>{' '}
+              <strong className="font-semibold text-stone-900">Want to verify a number?</strong>{' '}
               Trace every race back to its NARA 2024 baseline and 2026 AP / DDHQ / Ballotpedia
-              source links below.
+              citation below.
             </p>
             <div className="flex flex-wrap items-center gap-3 text-xs font-medium">
               <a
@@ -916,18 +1315,6 @@ export default function App() {
             <h2 className="text-2xl sm:text-3xl font-display font-semibold text-stone-900 mt-1">
               How the Primary Datasets Were Aggregated
             </h2>
-            <p className="text-sm text-stone-600 mt-2">
-              All analytical logic is decoupled from the React interface inside{' '}
-              <code className="font-mono text-xs bg-[#EFECE5] px-1.5 py-0.5 rounded border border-stone-200">
-                src/analysis/
-              </code>{' '}
-              (<code className="font-mono text-xs">datasets.ts</code>,{' '}
-              <code className="font-mono text-xs">shiftModel.ts</code>,{' '}
-              <code className="font-mono text-xs">demographicModel.ts</code>,{' '}
-              <code className="font-mono text-xs">types.ts</code>,{' '}
-              <code className="font-mono text-xs">index.ts</code>) so every formula, CVAP weight,
-              and residual can be audited or extended independently of the site layout.
-            </p>
           </div>
 
           {/* 4-Step Aggregation Pipeline */}
@@ -935,11 +1322,10 @@ export default function App() {
             <div className="bg-[#F5F2EB] border border-stone-200 rounded-lg p-5">
               <p className="font-mono text-xs text-stone-500">01 · 2024 Baseline</p>
               <h3 className="text-base font-display font-semibold text-stone-900 mt-1">
-                Certified Margin Extraction
+                Certified Margin
               </h3>
-              <p className="mt-2 text-xs text-stone-700 leading-relaxed">
-                Statewide 2024 popular vote shares from the National Archives and UCSB American
-                Presidency Project were standardized to{' '}
+              <p className="mt-1.5 text-xs text-stone-700 leading-relaxed">
+                NARA &amp; UCSB state shares normalized to{' '}
                 <code className="font-mono bg-white px-1 py-0.5 rounded border border-stone-200">
                   M₂₄ = Harris% − Trump%
                 </code>
@@ -950,36 +1336,34 @@ export default function App() {
             <div className="bg-[#F5F2EB] border border-stone-200 rounded-lg p-5">
               <p className="font-mono text-xs text-stone-500">02 · 2026 Ingestion</p>
               <h3 className="text-base font-display font-semibold text-stone-900 mt-1">
-                Cross-Source Reconciliation
+                Cross-Source Spread
               </h3>
-              <p className="mt-2 text-xs text-stone-700 leading-relaxed">
-                Vote totals across {STATEWIDE_RACES_2026.length} Senate &amp; Governor races were
-                cross-checked across AP, DDHQ, Ballotpedia, and MultiState, converting independent
-                challengers (NE, ID, MT) and RCV (AK) onto the same non-GOP vs. GOP spread.
+              <p className="mt-1.5 text-xs text-stone-700 leading-relaxed">
+                Reconciled across AP, DDHQ, Ballotpedia, and MultiState—including independents (NE,
+                ID, MT) and RCV (AK).
               </p>
             </div>
 
             <div className="bg-[#F5F2EB] border border-stone-200 rounded-lg p-5">
               <p className="font-mono text-xs text-stone-500">03 · National Mean</p>
               <h3 className="text-base font-display font-semibold text-stone-900 mt-1">
-                Dual Shift Aggregation
+                Dual Benchmarks
               </h3>
-              <p className="mt-2 text-xs text-stone-700 leading-relaxed">
-                Each race&apos;s swing (<code className="font-mono">M₂₆ − M₂₄</code>) is averaged
-                both equally across states (<strong className="font-mono">+{unweightedAvg.toFixed(1)}</strong>)
-                and weighted by 2026 ballots cast (<strong className="font-mono">+{weightedAvg.toFixed(1)}</strong>).
+              <p className="mt-1.5 text-xs text-stone-700 leading-relaxed">
+                Swings (<code className="font-mono">M₂₆ − M₂₄</code>) averaged equally (
+                <strong className="font-mono">+{unweightedAvg.toFixed(1)}</strong>) and by ballots
+                cast (<strong className="font-mono">+{weightedAvg.toFixed(1)}</strong>).
               </p>
             </div>
 
             <div className="bg-[#F5F2EB] border border-stone-200 rounded-lg p-5">
-              <p className="font-mono text-xs text-stone-500">04 · Demographics &amp; Policy</p>
+              <p className="font-mono text-xs text-stone-500">04 · Logit, CVAP &amp; Policy</p>
               <h3 className="text-base font-display font-semibold text-stone-900 mt-1">
-                CVAP Weights &amp; Issue Tagging
+                Potential Gain &amp; Tags
               </h3>
-              <p className="mt-2 text-xs text-stone-700 leading-relaxed">
-                Subtracting both the national mean and each state&apos;s CVAP demographic tilt yields
-                each candidate&apos;s Demographic-Adjusted Difference, then averaged by Pew/CWCP
-                ideological lane and verified campaign policy pillar.
+              <p className="mt-1.5 text-xs text-stone-700 leading-relaxed">
+                Fits <code className="font-mono">logit(p₂₆) = α + β·logit(p₂₄)</code> for ceiling
+                room and subtracts CVAP tilt, grouped by Pew/CWCP camp and policy pillars.
               </p>
             </div>
           </div>

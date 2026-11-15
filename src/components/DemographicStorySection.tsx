@@ -9,6 +9,7 @@ import {
 } from '../analysis';
 import {
   BenchmarkMode,
+  FactionLane,
   STATEWIDE_RACES_2026,
   formatPartyMargin,
   formatSignedMargin,
@@ -17,25 +18,33 @@ import {
 interface DemographicStorySectionProps {
   benchmarkMode: BenchmarkMode;
   nationalAvgShift: number;
+  factionOverrides?: Record<string, FactionLane>;
   onSelectState: (code: string) => void;
 }
 
-type BreakdownSortKey = 'adjusted' | 'raw' | 'demo';
+type BreakdownSortKey = 'mean' | 'logit' | 'adjusted' | 'raw' | 'demo';
 
 const CASE_STUDY_IDS = ['TX-SEN', 'TX-GOV', 'IA-GOV', 'PA-GOV', 'WV-SEN'];
 
 export function DemographicStorySection({
   benchmarkMode,
   nationalAvgShift,
+  factionOverrides = {},
   onSelectState,
 }: DemographicStorySectionProps) {
   const demographicShifts = DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS;
   const [isFullTableOpen, setIsFullTableOpen] = useState<boolean>(false);
-  const [breakdownSortKey, setBreakdownSortKey] = useState<BreakdownSortKey>('adjusted');
+  const [breakdownSortKey, setBreakdownSortKey] = useState<BreakdownSortKey>('mean');
 
   const raceMetaById = useMemo(
-    () => new Map(STATEWIDE_RACES_2026.map((r) => [r.id, r])),
-    []
+    () =>
+      new Map(
+        STATEWIDE_RACES_2026.map((r) => [
+          r.id,
+          { ...r, faction: factionOverrides[r.id] ?? r.faction },
+        ])
+      ),
+    [factionOverrides]
   );
 
   const meanPureDemo = useMemo(
@@ -62,8 +71,10 @@ export function DemographicStorySection({
   const sortedBreakdownRows = useMemo(() => {
     return [...combinedMetrics].sort((a, b) => {
       if (breakdownSortKey === 'raw') return b.rawShift - a.rawShift;
+      if (breakdownSortKey === 'logit') return b.logitAdjustedResidual - a.logitAdjustedResidual;
       if (breakdownSortKey === 'demo') return b.demographicWeight - a.demographicWeight;
-      return b.adjustedDifference - a.adjustedDifference;
+      if (breakdownSortKey === 'adjusted') return b.adjustedDifference - a.adjustedDifference;
+      return b.afterMeanResidual - a.afterMeanResidual;
     });
   }, [combinedMetrics, breakdownSortKey]);
 
@@ -96,9 +107,9 @@ export function DemographicStorySection({
             Why Texas and West Virginia Tell Opposite Stories Under the Hood
           </h2>
           <p className="text-sm text-stone-600 mt-2 leading-relaxed">
-            Raw statewide swings treat every voter pool identically. By weighting each state&apos;s
-            Census Citizen Voting-Age Population (CVAP) shares against 2026 national exit-poll shifts,
-            we separate <em>who lives in a state</em> from <em>how much extra ground a candidate won</em>.
+            Weighting each state&apos;s Citizen Voting-Age Population (CVAP) against 2026 national
+            exit polls separates <em>who lives in a state</em> from{' '}
+            <em>extra ground a candidate won</em>.
           </p>
         </div>
         <button
@@ -118,11 +129,10 @@ export function DemographicStorySection({
             Step 1 · National Mean Tide (+{nationalAvgShift.toFixed(1)} pts)
           </p>
           <p className="mt-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
-            Every 2026 race rode a broad anti-incumbent wave averaging{' '}
-            <strong className="font-mono">+{nationalAvgShift.toFixed(1)} pts</strong>{' '}
-            ({benchmarkMode === 'unweighted' ? 'equal state mean' : 'ballot-weighted'}). Subtracting
-            the national mean removes the baseline tide so we do not credit individual candidates for
-            a nationwide swing.
+            Removes the{' '}
+            <strong className="font-mono">+{nationalAvgShift.toFixed(1)} pt</strong>{' '}
+            ({benchmarkMode === 'unweighted' ? 'state mean' : 'ballot-weighted'}) anti-incumbent wave
+            so candidates aren&apos;t credited for a national tide.
           </p>
         </div>
 
@@ -131,11 +141,11 @@ export function DemographicStorySection({
             Step 2 · State Demographic CVAP Tilt (vs. +{meanPureDemo.toFixed(1)} avg)
           </p>
           <p className="mt-2 text-xs sm:text-sm text-stone-700 leading-relaxed">
-            Exit polls from SSRS, UCLA LPPI, and <em>The Washington Post</em> show Hispanic voters
-            rebounded <strong className="font-mono">+{demographicShifts.hispanic.toFixed(1)} pts</strong>{' '}
-            while White voters shifted <strong className="font-mono">+{demographicShifts.white.toFixed(1)} pts</strong>.
-            States with large Latino and AAPI shares carry a positive expected demographic tilt;
-            heavily White states carry a negative tilt.
+            SSRS, UCLA LPPI, and <em>Post</em> exit polls show Hispanic voters shifted{' '}
+            <strong className="font-mono">+{demographicShifts.hispanic.toFixed(1)} pts</strong> vs.{' '}
+            <strong className="font-mono">+{demographicShifts.white.toFixed(1)} pts</strong> among
+            White voters—giving high-Latino states a positive tilt and heavily White states a
+            negative tilt.
           </p>
         </div>
       </div>
@@ -146,47 +156,41 @@ export function DemographicStorySection({
           How Demographics Flip the Texas vs. Midwest Story
         </h3>
         {txSen && txGov && iaGov && wvSen && (
-          <div className="mt-2 space-y-3 text-sm text-stone-700 leading-relaxed max-w-4xl">
+          <div className="mt-2 space-y-2.5 text-sm text-stone-700 leading-relaxed max-w-4xl">
             <p>
-              Start with Texas, where Democrat <strong>James Talarico</strong> (
-              <strong className="font-mono">{formatSignedMargin(txSen.rawShift)}</strong> raw) and
-              Governor-elect <strong>Gina Hinojosa</strong> (
+              In Texas, <strong>James Talarico</strong> (
+              <strong className="font-mono">{formatSignedMargin(txSen.rawShift)}</strong> raw) and{' '}
+              <strong>Gina Hinojosa</strong> (
               <strong className="font-mono">{formatSignedMargin(txGov.rawShift)}</strong> raw)
-              shared the same electorate on the same night. Texas&apos;s 32.3% Hispanic CVAP share
-              gives it a{' '}
+              shared the same electorate. Texas&apos;s {txSen.profile.hispanic.toFixed(1)}% Hispanic CVAP gives it a{' '}
               <strong className="font-mono">
                 {formatSignedMargin(txSen.demographicWeight)} pt
               </strong>{' '}
-              demographic tailwind above the national tracked average (expected shift{' '}
-              <strong className="font-mono">+{txSen.adjustedDemographicBenchmark.toFixed(1)}</strong>
-              ). Subtracting only the national mean leaves Hinojosa comfortably ahead (
-              <span className="font-mono">{formatSignedMargin(txGov.afterMeanResidual)}</span>).
-              Subtracting Texas&apos;s demographic rebound puts Hinojosa essentially right at
-              expectation (
+              demographic tailwind: adjusting for it puts Hinojosa right at expectation (
               <strong className="font-mono text-[#0F766E]">
                 {formatSignedMargin(txGov.adjustedDifference)} pts
               </strong>
-              ), whereas Talarico still beats the demographic benchmark by{' '}
+              ), while Talarico still clears the benchmark by{' '}
               <strong className="font-mono text-[#0F766E]">
                 {formatSignedMargin(txSen.adjustedDifference)} pts
               </strong>
               .
             </p>
             <p>
-              The mirror image happens in overwhelmingly White states. In Iowa (89.0% White CVAP)
-              and West Virginia (92.9% White CVAP), national demographic weights predict slower
-              swings (<span className="font-mono">{formatSignedMargin(iaGov.demographicWeight)}</span>{' '}
-              and <span className="font-mono">{formatSignedMargin(wvSen.demographicWeight)}</span>{' '}
-              pts below the national mean). Once that headwind is factored in,{' '}
-              <strong>Rob Sand</strong>&apos;s IA-Gov win rises to{' '}
+              Overwhelmingly White states invert that gap. Both Iowa (
+              {iaGov.profile.white.toFixed(1)}% White) and West Virginia (
+              {wvSen.profile.white.toFixed(1)}% White) carry demographic headwinds (
+              <span className="font-mono">{formatSignedMargin(iaGov.demographicWeight)}</span> and{' '}
+              <span className="font-mono">{formatSignedMargin(wvSen.demographicWeight)}</span> pts),
+              lifting <strong>Rob Sand</strong> to{' '}
               <strong className="font-mono text-[#0F766E]">
                 {formatSignedMargin(iaGov.adjustedDifference)} pts
               </strong>{' '}
-              and West Virginia&apos;s 21.5-point Senate compression jumps to{' '}
+              and West Virginia&apos;s {wvSen.rawShift.toFixed(1)}-pt compression to{' '}
               <strong className="font-mono text-[#0F766E]">
                 {formatSignedMargin(wvSen.adjustedDifference)} pts
               </strong>{' '}
-              above demographic expectations.
+              above demographic expectation.
             </p>
           </div>
         )}
@@ -296,7 +300,9 @@ export function DemographicStorySection({
                   onChange={(e) => setBreakdownSortKey(e.target.value as BreakdownSortKey)}
                   className="bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 focus:outline-2 focus:outline-[#1E3A8A]"
                 >
-                  <option value="adjusted">Demographic-Adjusted Diff.</option>
+                  <option value="mean">Mean-Adjusted Diff.</option>
+                  <option value="logit">Logit-Adjusted (Potential Gain)</option>
+                  <option value="adjusted">Demo-Adjusted Diff.</option>
                   <option value="raw">Raw Shift vs. 2024</option>
                   <option value="demo">State Demographic Tilt</option>
                 </select>
@@ -304,14 +310,15 @@ export function DemographicStorySection({
             </div>
 
             <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-              <table className="w-full text-left border-collapse min-w-[700px] text-xs sm:text-sm">
+              <table className="w-full text-left border-collapse min-w-[760px] text-xs sm:text-sm">
                 <thead className="sticky top-0 bg-[#FBF9F5] border-b border-stone-200 text-xs text-stone-500 z-10">
                   <tr>
                     <th className="py-2.5 px-5 font-medium">Race &amp; Candidate</th>
                     <th className="py-2.5 px-3 font-medium text-right">Raw Diff.</th>
-                    <th className="py-2.5 px-3 font-medium text-right">Mean-Adjusted</th>
+                    <th className="py-2.5 px-3 font-medium text-right">Mean-Adj.</th>
+                    <th className="py-2.5 px-3 font-medium text-right">Logit-Adj.</th>
                     <th className="py-2.5 px-3 font-medium text-right">Demo Tilt</th>
-                    <th className="py-2.5 px-5 font-medium text-right">Demo-Adjusted</th>
+                    <th className="py-2.5 px-5 font-medium text-right">Demo-Adj.</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200">
@@ -330,7 +337,7 @@ export function DemographicStorySection({
                           {row.race.featuredCandidate}
                         </span>
                         <span className="block text-[11px] text-stone-500">
-                          {row.race.faction}
+                          {factionOverrides[row.race.id] ?? row.race.faction}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-medium tabular-nums text-[#1E3A8A]">
@@ -338,6 +345,13 @@ export function DemographicStorySection({
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono font-medium tabular-nums text-stone-800">
                         {formatSignedMargin(row.afterMeanResidual)}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 text-right font-mono font-medium tabular-nums ${
+                          row.logitAdjustedResidual >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                        }`}
+                      >
+                        {formatSignedMargin(row.logitAdjustedResidual)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-stone-600">
                         {formatSignedMargin(row.demographicWeight)}

@@ -7,6 +7,7 @@ import {
 } from '../analysis';
 import {
   BenchmarkMode,
+  FactionLane,
   STATE_TILES,
   STATEWIDE_RACES_2026,
   StatewideRace,
@@ -16,7 +17,13 @@ import {
   resolveSourceLinks,
 } from '../data/electionData';
 
-type MapMetricMode = 'shift' | 'meanAdjusted' | 'overperformance' | 'margin' | 'faction';
+type MapMetricMode =
+  | 'shift'
+  | 'meanAdjusted'
+  | 'logitAdjusted'
+  | 'overperformance'
+  | 'margin'
+  | 'faction';
 type OfficeFilter = 'all' | 'Senate' | 'Governor';
 
 interface USStateTileMapProps {
@@ -24,6 +31,7 @@ interface USStateTileMapProps {
   onChangeBenchmarkMode: (mode: BenchmarkMode) => void;
   nationalAvgShift: number;
   demographicShifts?: NationalDemographicShifts;
+  factionOverrides?: Record<string, FactionLane>;
   selectedStateCode: string;
   onSelectState: (code: string) => void;
 }
@@ -66,6 +74,7 @@ export function USStateTileMap({
   onChangeBenchmarkMode,
   nationalAvgShift,
   demographicShifts = DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS,
+  factionOverrides = {},
   selectedStateCode,
   onSelectState,
 }: USStateTileMapProps) {
@@ -139,6 +148,7 @@ export function USStateTileMap({
     const shift = calculateRaceShift(race);
     const metrics = combinedByRaceId.get(race.id);
     const meanAdj = metrics?.afterMeanResidual ?? 0;
+    const logitAdj = metrics?.logitAdjustedResidual ?? 0;
     const demoAdj = metrics?.adjustedDifference ?? 0;
 
     if (metricMode === 'shift') {
@@ -182,8 +192,17 @@ export function USStateTileMap({
       };
     }
 
-    if (metricMode === 'meanAdjusted' || metricMode === 'overperformance') {
-      const residual = metricMode === 'meanAdjusted' ? meanAdj : demoAdj;
+    if (
+      metricMode === 'meanAdjusted' ||
+      metricMode === 'logitAdjusted' ||
+      metricMode === 'overperformance'
+    ) {
+      const residual =
+        metricMode === 'meanAdjusted'
+          ? meanAdj
+          : metricMode === 'logitAdjusted'
+          ? logitAdj
+          : demoAdj;
       if (residual >= 5) {
         return {
           bgClass: 'bg-[#1E3A8A]',
@@ -251,7 +270,8 @@ export function USStateTileMap({
     }
 
     // Faction mode
-    const style = FACTION_SHORT[race.faction] ?? FACTION_SHORT['Pragmatic Center-Left'];
+    const effectiveFaction = factionOverrides[race.id] ?? race.faction;
+    const style = FACTION_SHORT[effectiveFaction] ?? FACTION_SHORT['Pragmatic Center-Left'];
     return {
       bgClass: style.bg,
       textClass: style.text,
@@ -271,10 +291,8 @@ export function USStateTileMap({
             First, Putting Every State on the Same Starting Line
           </h2>
           <p className="text-sm text-stone-600 mt-2 max-w-2xl">
-            Raw election results tell us who won, not how far the ground moved. Anchor all{' '}
-            {STATEWIDE_RACES_2026.length} Senate and Governor races to each state&apos;s certified
-            2024 presidential margin, then toggle between Raw Diff., Mean-Adjusted, Demo-Adjusted,
-            and candidate affiliation—or click any state to inspect its local story.
+            Anchor all {STATEWIDE_RACES_2026.length} Senate and Governor contests to 2024
+            presidential baselines. Switch metrics or click any state to inspect its local story.
           </p>
         </div>
 
@@ -327,6 +345,7 @@ export function USStateTileMap({
             [
               { id: 'shift', label: 'Raw Diff. vs. 2024' },
               { id: 'meanAdjusted', label: 'Mean-Adjusted' },
+              { id: 'logitAdjusted', label: 'Logit-Adj. (Potential Gain)' },
               { id: 'overperformance', label: 'Demo-Adjusted' },
               { id: 'margin', label: '2026 Margin' },
               { id: 'faction', label: 'Affiliation' },
@@ -436,10 +455,16 @@ export function USStateTileMap({
                 </span>
               </div>
             )}
-            {(metricMode === 'overperformance' || metricMode === 'meanAdjusted') && (
+            {(metricMode === 'overperformance' ||
+              metricMode === 'meanAdjusted' ||
+              metricMode === 'logitAdjusted') && (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-medium text-stone-700">
-                  {metricMode === 'meanAdjusted' ? 'Mean-Adjusted Diff.:' : 'Demo-Adjusted Diff.:'}
+                  {metricMode === 'meanAdjusted'
+                    ? 'Mean-Adjusted Diff.:'
+                    : metricMode === 'logitAdjusted'
+                    ? 'Logit-Adjusted Diff.:'
+                    : 'Demo-Adjusted Diff.:'}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-xs bg-[#1E3A8A] inline-block" /> +5+ over
@@ -555,6 +580,7 @@ export function USStateTileMap({
                   const shift = calculateRaceShift(race);
                   const metrics = combinedByRaceId.get(race.id);
                   const meanAdj = metrics?.afterMeanResidual ?? 0;
+                  const logitAdj = metrics?.logitAdjustedResidual ?? 0;
                   const demoAdj = metrics?.adjustedDifference ?? 0;
 
                   return (
@@ -563,7 +589,7 @@ export function USStateTileMap({
                         <span className="font-medium text-stone-700">{race.raceLabel}</span>
                         <span>
                           {race.flipped ? 'Seat Flipped Party' : `${race.winnerParty} Hold`} ·{' '}
-                          {race.faction}
+                          {factionOverrides[race.id] ?? race.faction}
                         </span>
                       </div>
 
@@ -576,8 +602,8 @@ export function USStateTileMap({
                         </p>
                       </div>
 
-                      {/* 4-metric quantitative strip */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 p-3 bg-[#F7F4EE] border border-stone-200/80 rounded">
+                      {/* 5-metric quantitative strip */}
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mt-3 p-3 bg-[#F7F4EE] border border-stone-200/80 rounded">
                         <div>
                           <span className="block text-[11px] text-stone-500">2026 Margin</span>
                           <span
@@ -602,6 +628,16 @@ export function USStateTileMap({
                             }`}
                           >
                             {formatSignedMargin(meanAdj)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] text-stone-500">Logit-Adj.</span>
+                          <span
+                            className={`font-mono text-sm font-semibold tabular-nums ${
+                              logitAdj >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                            }`}
+                          >
+                            {formatSignedMargin(logitAdj)}
                           </span>
                         </div>
                         <div>

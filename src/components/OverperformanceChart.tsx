@@ -3,6 +3,8 @@ import {
   NationalDemographicShifts,
   RAW_RACES_2026,
   computeCombinedAdjustedMetrics,
+  fitLogitShiftModel,
+  predictLogitExpectedMargin,
 } from '../analysis';
 import {
   BenchmarkMode,
@@ -16,13 +18,14 @@ interface OverperformanceChartProps {
   benchmarkMode: BenchmarkMode;
   nationalAvgShift: number;
   demographicShifts: NationalDemographicShifts;
+  factionOverrides?: Record<string, FactionLane>;
   selectedStateCode: string;
   onSelectState: (code: string) => void;
 }
 
 type ChartView = 'bars' | 'scatter';
-type PrimaryMetricMode = 'adjusted' | 'mean' | 'raw';
-type SortMode = 'active' | 'mean' | 'raw' | 'baseline';
+type PrimaryMetricMode = 'mean' | 'logit' | 'raw' | 'adjusted';
+type SortMode = 'mean' | 'logit' | 'raw' | 'adjusted' | 'baseline';
 
 const FACTION_COLORS: Record<FactionLane, string> = {
   'Pragmatic Center-Left': '#1E3A8A',
@@ -36,18 +39,35 @@ export function OverperformanceChart({
   benchmarkMode,
   nationalAvgShift,
   demographicShifts,
+  factionOverrides = {},
   selectedStateCode,
   onSelectState,
 }: OverperformanceChartProps) {
   const [chartView, setChartView] = useState<ChartView>('bars');
-  const [metricMode, setMetricMode] = useState<PrimaryMetricMode>('adjusted');
-  const [sortMode, setSortMode] = useState<SortMode>('active');
+  const [metricMode, setMetricMode] = useState<PrimaryMetricMode>('mean');
+  const [sortMode, setSortMode] = useState<SortMode>('mean');
   const [factionFilter, setFactionFilter] = useState<FactionLane | 'All'>('All');
   const [hoveredRaceId, setHoveredRaceId] = useState<string | null>(null);
 
+  function handleSelectMetricMode(nextMode: PrimaryMetricMode) {
+    setMetricMode(nextMode);
+    setSortMode(nextMode);
+  }
+
   const raceMetaById = useMemo(
-    () => new Map(STATEWIDE_RACES_2026.map((r) => [r.id, r])),
-    []
+    () =>
+      new Map(
+        STATEWIDE_RACES_2026.map((r) => [
+          r.id,
+          { ...r, faction: factionOverrides[r.id] ?? r.faction },
+        ])
+      ),
+    [factionOverrides]
+  );
+
+  const logitParams = useMemo(
+    () => fitLogitShiftModel(RAW_RACES_2026, benchmarkMode),
+    [benchmarkMode]
   );
 
   const combinedMetrics = useMemo(
@@ -62,6 +82,8 @@ export function OverperformanceChart({
         const activeMetric =
           metricMode === 'adjusted'
             ? m.adjustedDifference
+            : metricMode === 'logit'
+            ? m.logitAdjustedResidual
             : metricMode === 'mean'
             ? m.afterMeanResidual
             : m.rawShift;
@@ -75,9 +97,10 @@ export function OverperformanceChart({
 
     return [...filtered].sort((a, b) => {
       if (sortMode === 'raw') return b.rawShift - a.rawShift;
-      if (sortMode === 'mean') return b.afterMeanResidual - a.afterMeanResidual;
+      if (sortMode === 'logit') return b.logitAdjustedResidual - a.logitAdjustedResidual;
+      if (sortMode === 'adjusted') return b.adjustedDifference - a.adjustedDifference;
       if (sortMode === 'baseline') return a.uiRace.presMargin2024 - b.uiRace.presMargin2024;
-      return b.activeMetric - a.activeMetric;
+      return b.afterMeanResidual - a.afterMeanResidual;
     });
   }, [combinedMetrics, raceMetaById, metricMode, factionFilter, sortMode]);
 
@@ -109,16 +132,16 @@ export function OverperformanceChart({
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-6">
         <div>
           <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-            02 · Raw Diff., Mean-Adjusted &amp; Demo-Adjusted
+            02 · Raw Diff., Mean-Adjusted, Logit-Adjusted &amp; Demo-Adjusted
           </p>
           <h2 className="text-2xl sm:text-3xl font-display font-semibold text-stone-900 mt-1">
-            Who Outran the Tide—and Who Beat Demographics?
+            Who Outran the Tide—and Who Beat Potential-Gain &amp; Demographics?
           </h2>
           <p className="text-sm text-stone-600 mt-2 max-w-2xl">
-            Switch between <strong>Raw Diff.</strong> (2026 vs. 2024),{' '}
-            <strong>Mean-Adjusted</strong> (removing the{' '}
-            <span className="font-mono">+{nationalAvgShift.toFixed(1)}</span> national wave), and{' '}
-            <strong>Demo-Adjusted</strong> (also removing each state&apos;s CVAP demographic tilt).{' '}
+            Defaulting to <strong>Mean-Adjusted</strong> (removing the{' '}
+            <span className="font-mono">+{nationalAvgShift.toFixed(1)}</span> wave). Switch to{' '}
+            <strong>Logit-Adj.</strong> (potential-gain curve in log-odds space),{' '}
+            <strong>Raw Diff.</strong>, or <strong>Demo-Adjusted</strong> (CVAP tilt).{' '}
             <a
               href="#demographics"
               className="text-[#1E3A8A] underline underline-offset-4 whitespace-nowrap"
@@ -129,21 +152,10 @@ export function OverperformanceChart({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 shrink-0">
-          <div className="inline-flex items-center p-1 bg-[#EFECE5] border border-stone-200 rounded-md">
+          <div className="inline-flex flex-wrap items-center p-1 bg-[#EFECE5] border border-stone-200 rounded-md">
             <button
               type="button"
-              onClick={() => setMetricMode('raw')}
-              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                metricMode === 'raw'
-                  ? 'bg-stone-900 text-[#FBF9F5]'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              Raw Diff.
-            </button>
-            <button
-              type="button"
-              onClick={() => setMetricMode('mean')}
+              onClick={() => handleSelectMetricMode('mean')}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 metricMode === 'mean'
                   ? 'bg-[#1E3A8A] text-white'
@@ -154,7 +166,29 @@ export function OverperformanceChart({
             </button>
             <button
               type="button"
-              onClick={() => setMetricMode('adjusted')}
+              onClick={() => handleSelectMetricMode('logit')}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                metricMode === 'logit'
+                  ? 'bg-[#4338CA] text-white'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              Logit-Adj.
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectMetricMode('raw')}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                metricMode === 'raw'
+                  ? 'bg-stone-900 text-[#FBF9F5]'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              Raw Diff.
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectMetricMode('adjusted')}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 metricMode === 'adjusted'
                   ? 'bg-[#0F766E] text-white'
@@ -229,15 +263,10 @@ export function OverperformanceChart({
               onChange={(e) => setSortMode(e.target.value as SortMode)}
               className="bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 focus:outline-2 focus:outline-[#1E3A8A]"
             >
-              <option value="active">
-                {metricMode === 'adjusted'
-                  ? 'Demo-Adjusted'
-                  : metricMode === 'mean'
-                  ? 'Mean-Adjusted'
-                  : 'Raw Diff. (vs. 2024)'}
-              </option>
               <option value="mean">Mean-Adjusted</option>
+              <option value="logit">Logit-Adj. (Potential Gain)</option>
               <option value="raw">Raw Diff. (vs. 2024)</option>
+              <option value="adjusted">Demo-Adjusted</option>
               <option value="baseline">2024 Baseline (Reddest First)</option>
             </select>
           </div>
@@ -251,17 +280,21 @@ export function OverperformanceChart({
             <div>
               <div className="flex items-center justify-between text-xs text-stone-500 mb-4 pb-2 border-b border-stone-100">
                 <span>Race &amp; Featured Candidate</span>
-                <div className="flex items-center gap-5 font-mono">
+                <div className="flex items-center gap-4 font-mono">
                   <span className="hidden sm:inline">
                     {metricMode === 'raw'
-                      ? '(Mean / Demo)'
+                      ? '(Mean / Logit / Demo)'
+                      : metricMode === 'logit'
+                      ? '(Mean / Raw / Demo)'
                       : metricMode === 'mean'
-                      ? '(Raw / Demo)'
-                      : '(Raw / Mean)'}
+                      ? '(Raw / Logit / Demo)'
+                      : '(Raw / Mean / Logit)'}
                   </span>
-                  <span className="w-36 text-right">
+                  <span className="w-32 text-right">
                     {metricMode === 'adjusted'
                       ? 'Demo-Adjusted'
+                      : metricMode === 'logit'
+                      ? 'Logit-Adjusted'
                       : metricMode === 'mean'
                       ? 'Mean-Adjusted'
                       : 'Raw Diff.'}
@@ -271,17 +304,26 @@ export function OverperformanceChart({
 
               <div className="space-y-1.5 max-h-[540px] overflow-y-auto pr-1">
                 {enrichedRaces.map(
-                  ({ uiRace, rawShift, afterMeanResidual, adjustedDifference, activeMetric }) => {
+                  ({
+                    uiRace,
+                    rawShift,
+                    afterMeanResidual,
+                    logitAdjustedResidual,
+                    adjustedDifference,
+                    activeMetric,
+                  }) => {
                     const isSelected = uiRace.stateCode === selectedStateCode;
                     const maxScale = metricMode === 'raw' ? 28 : 16;
                     const clampedWidth = Math.min(100, (Math.abs(activeMetric) / maxScale) * 100);
                     const factionColor = FACTION_COLORS[uiRace.faction];
                     const subMetrics =
                       metricMode === 'raw'
-                        ? `${formatSignedMargin(afterMeanResidual)} / ${formatSignedMargin(adjustedDifference)}`
+                        ? `${formatSignedMargin(afterMeanResidual)} · ${formatSignedMargin(logitAdjustedResidual)} · ${formatSignedMargin(adjustedDifference)}`
+                        : metricMode === 'logit'
+                        ? `${formatSignedMargin(afterMeanResidual)} · ${formatSignedMargin(rawShift)} · ${formatSignedMargin(adjustedDifference)}`
                         : metricMode === 'mean'
-                        ? `${formatSignedMargin(rawShift)} / ${formatSignedMargin(adjustedDifference)}`
-                        : `${formatSignedMargin(rawShift)} / ${formatSignedMargin(afterMeanResidual)}`;
+                        ? `${formatSignedMargin(rawShift)} · ${formatSignedMargin(logitAdjustedResidual)} · ${formatSignedMargin(adjustedDifference)}`
+                        : `${formatSignedMargin(rawShift)} · ${formatSignedMargin(afterMeanResidual)} · ${formatSignedMargin(logitAdjustedResidual)}`;
 
                   return (
                     <button
@@ -312,7 +354,7 @@ export function OverperformanceChart({
                         </span>
                       </div>
 
-                      <div className="col-span-5 flex items-center">
+                      <div className="col-span-4 flex items-center">
                         <div className="w-full h-5 flex items-center relative">
                           <div className="w-1/2 h-full flex justify-end items-center pr-0.5 border-r border-stone-300">
                             {activeMetric < 0 && (
@@ -336,7 +378,7 @@ export function OverperformanceChart({
                         </div>
                       </div>
 
-                      <div className="col-span-2 text-right font-mono text-xs tabular-nums">
+                      <div className="col-span-3 text-right font-mono text-xs tabular-nums">
                         <span
                           className={`font-semibold ${
                             activeMetric >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
@@ -344,8 +386,8 @@ export function OverperformanceChart({
                         >
                           {formatSignedMargin(activeMetric)}
                         </span>
-                        <span className="block text-[10px] text-stone-400">
-                          ({subMetrics})
+                        <span className="block text-[10px] text-stone-400 whitespace-nowrap">
+                          {subMetrics}
                         </span>
                       </div>
                     </button>
@@ -360,6 +402,7 @@ export function OverperformanceChart({
                 <span>Horizontal: 2024 Pres. Margin · Vertical: 2026 Margin</span>
                 <div className="flex flex-wrap items-center gap-4 font-mono text-[11px]">
                   <span className="text-[#1E3A8A]">--- National Mean (+{nationalAvgShift.toFixed(1)})</span>
+                  <span className="text-[#4338CA]">··· Logit Curve (β={logitParams.beta.toFixed(2)})</span>
                 </div>
               </div>
 
@@ -434,6 +477,19 @@ export function OverperformanceChart({
                     strokeOpacity={0.7}
                     strokeWidth={1.6}
                     strokeDasharray="6 4"
+                  />
+
+                  <path
+                    d={Array.from({ length: 38 }, (_, idx) => {
+                      const xVal = -44 + idx * 2;
+                      const yVal = Math.min(yMax, Math.max(yMin, predictLogitExpectedMargin(xVal, logitParams)));
+                      return `${idx === 0 ? 'M' : 'L'} ${toX(xVal).toFixed(1)} ${toY(yVal).toFixed(1)}`;
+                    }).join(' ')}
+                    fill="none"
+                    stroke="#4338CA"
+                    strokeOpacity={metricMode === 'logit' ? 0.9 : 0.45}
+                    strokeWidth={metricMode === 'logit' ? 2.2 : 1.4}
+                    strokeDasharray="3 3"
                   />
 
                   <rect
@@ -537,7 +593,7 @@ export function OverperformanceChart({
                   </dd>
                 </div>
                 <div className="py-2.5 flex justify-between gap-2">
-                  <dt className="text-stone-600">Mean-Adjusted (vs. Tide)</dt>
+                  <dt className="text-stone-900 font-medium">Mean-Adjusted (Default)</dt>
                   <dd
                     className={`font-mono font-semibold tabular-nums ${
                       focusedItem.afterMeanResidual >= 0 ? 'text-stone-900' : 'text-[#9A3412]'
@@ -547,13 +603,23 @@ export function OverperformanceChart({
                   </dd>
                 </div>
                 <div className="py-2.5 flex justify-between gap-2">
+                  <dt className="text-stone-600">Logit-Adj. (Potential Gain)</dt>
+                  <dd
+                    className={`font-mono font-semibold tabular-nums ${
+                      focusedItem.logitAdjustedResidual >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                    }`}
+                  >
+                    {formatSignedMargin(focusedItem.logitAdjustedResidual)} pts
+                  </dd>
+                </div>
+                <div className="py-2.5 flex justify-between gap-2">
                   <dt className="text-stone-600">State Demographic Tilt</dt>
                   <dd className="font-mono font-medium tabular-nums text-stone-700">
                     {formatSignedMargin(focusedItem.demographicWeight)} pts
                   </dd>
                 </div>
                 <div className="py-2.5 flex justify-between gap-2">
-                  <dt className="text-stone-900 font-medium">Demo-Adjusted Diff.</dt>
+                  <dt className="text-stone-600">Demo-Adjusted Diff.</dt>
                   <dd
                     className={`font-mono font-semibold tabular-nums ${
                       focusedItem.adjustedDifference >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'

@@ -207,19 +207,25 @@ export function MethodologyModal({
 
           <div>
             <h3 className="font-sans font-semibold text-stone-900 text-sm mb-1.5">
-              Step 4 · Demographic-Adjusted Difference
+              Step 4 · Potential-Gain (Logit) &amp; Demographic-Adjusted Models
             </h3>
             <p>
-              To separate candidate performance from both the national wave and state demographics,{' '}
+              Alongside <strong>Mean-Adjusted</strong> (our default linear wave residual),{' '}
+              <code className="font-mono text-xs bg-[#F2EFE9] px-1.5 py-0.5 rounded">
+                src/analysis/shiftModel.ts
+              </code>{' '}
+              fits a <strong>Logit Potential-Gain Curve</strong> by converting margins to implied
+              two-party vote shares (<code className="font-mono text-xs">p = 0.5 + M / 200</code>)
+              and regressing{' '}
+              <code className="font-mono text-xs">logit(p₂₆) = α + β · logit(p₂₄)</code> across
+              the {raceCount} contests. Inverting the prediction back to margin points separates true
+              underperformance from safe-seat ceiling compression. Separately,{' '}
               <code className="font-mono text-xs bg-[#F2EFE9] px-1.5 py-0.5 rounded">
                 src/analysis/demographicModel.ts
               </code>{' '}
-              combines two structural benchmarks: <strong>(1) National Mean Tide</strong> (mean
-              2026-vs-2024 swing across tracked races) and{' '}
-              <strong>(2) Demographic CVAP Tilt</strong> (Pew/ACS state eligible-voter shares ×
-              national exit-poll group swings minus the tracked-state demographic mean). Subtracting
-              both from each race&apos;s raw swing yields its{' '}
-              <strong>Demographic-Adjusted Difference</strong>.
+              combines the National Mean Tide and <strong>Demographic CVAP Tilt</strong> (Pew/ACS
+              eligible-voter shares × national exit-poll group swings minus the tracked-state mean)
+              to compute the <strong>Demographic-Adjusted Difference</strong>.
             </p>
           </div>
 

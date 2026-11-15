@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, Download, Info } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Info, RotateCcw } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ALL_FACTIONS,
   DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS,
   NationalDemographicShifts,
   RAW_RACES_2026,
@@ -23,6 +24,9 @@ interface AffiliationPolicyAnalysisProps {
   benchmarkMode?: BenchmarkMode;
   nationalAvgShift: number;
   demographicShifts?: NationalDemographicShifts;
+  factionOverrides?: Record<string, FactionLane>;
+  onChangeFaction?: (raceId: string, faction: FactionLane) => void;
+  onResetFactions?: () => void;
   onSelectState: (code: string) => void;
 }
 
@@ -114,27 +118,59 @@ function ColumnHeaderTooltip({
 
 const FACTION_SUMMARIES: Record<FactionLane, string> = {
   'Pragmatic Center-Left':
-    'Maps to Pew’s institutional “Loyal Liberals / Order & Opportunity Left” & New Dem/Blue Dog coalitions (e.g., Roy Cooper, Rob Sand, Josh Shapiro, Adam Hamilton, Annie Andrews) emphasizing Medicaid, anti-tariff relief, and cross-party competence.',
+    'Institutional New Dem / moderate coalitions (Cooper, Sand, Shapiro, Andrews) focused on Medicaid and cross-party competence.',
   'Economic Populist & Labor':
-    'Grounded in the Center for Working-Class Politics (CWCP) economic-populism framework (e.g., James Talarico, Gina Hinojosa, Josh Turek, Sherrod Brown, David Crowley): anti-corporate, public-school, and blue-collar pocketbook messaging.',
+    'CWCP-style economic populists (Talarico, Hinojosa, Turek, Brown) pairing anti-corporate pocketbook fights with public school defense.',
   'Progressive Reformer':
-    'Maps to Pew’s activist “Leftward Progressives” & Our Revolution/CPC wings (e.g., Abdul El-Sayed, Ed Markey, Peggy Flanagan, Jeff Merkley, and Bernie Sanders’s former Maine director Troy Jackson) backing Medicare for All and systemic reform; most ran in D+4 to D+25 states.',
+    'Systemic reform and Sanders/CPC-aligned wings (El-Sayed, Markey, Flanagan, Merkley, Jackson); mostly ran in D+4 to D+25 states.',
   'Independent Populist':
-    'Non-party labor and anti-establishment campaigns (Dan Osborn in NE, Seth Bodnar in MT, Todd Achilles in ID) testing CWCP’s hypothesis that dropping the Democratic label trims 9–14 pts off deep-red 2024 baselines.',
+    'Non-party challengers (Osborn in NE, Bodnar in MT, Achilles in ID) testing whether dropping the Democratic label helps in R+20+ states.',
   'GOP Resilience Hold':
-    'Maps to Pew’s right-of-center coalition (“Pragmatic” & “Unconventional Right”) across Republican holds (e.g., Byron Donalds in FL, Ashley Moody in FL, Shelley Moore Capito in WV) focused on housing permitting, energy, and local growth.',
+    'Right-of-center holds (Donalds, Moody, Capito) emphasizing housing permitting, energy, and local growth.',
 };
 
 export function AffiliationPolicyAnalysis({
   benchmarkMode = 'unweighted',
   nationalAvgShift,
   demographicShifts = DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS,
+  factionOverrides = {},
+  onChangeFaction,
+  onResetFactions,
   onSelectState,
 }: AffiliationPolicyAnalysisProps) {
-  const [selectedPolicy, setSelectedPolicy] = useState<PolicyPillar>('Cost of Living & Inflation');
+  const [selectedPolicy, setSelectedPolicy] = useState<PolicyPillar>('Trade & Tariffs');
   const [openTooltipId, setOpenTooltipId] = useState<string | null>(null);
   const [hoveredMemberFaction, setHoveredMemberFaction] = useState<FactionLane | null>(null);
   const [expandedFactions, setExpandedFactions] = useState<Record<string, boolean>>({});
+  const [assignmentFilterFaction, setAssignmentFilterFaction] = useState<FactionLane | 'All'>('All');
+  const [assignmentSearch, setAssignmentSearch] = useState<string>('');
+  const [isAssignmentTableOpen, setIsAssignmentTableOpen] = useState<boolean>(false);
+
+  const effectiveUiRaces = useMemo(
+    () =>
+      STATEWIDE_RACES_2026.map((r) => ({
+        ...r,
+        faction: factionOverrides[r.id] ?? r.faction,
+        defaultFaction: r.faction,
+      })),
+    [factionOverrides]
+  );
+
+  const effectiveRawRaces = useMemo(
+    () =>
+      RAW_RACES_2026.map((r) => ({
+        ...r,
+        faction: factionOverrides[r.id] ?? r.faction,
+      })),
+    [factionOverrides]
+  );
+
+  const defaultFactionByRaceId = useMemo(
+    () => new Map(STATEWIDE_RACES_2026.map((r) => [r.id, r.faction])),
+    []
+  );
+
+  const overrideCount = Object.keys(factionOverrides).length;
 
   const combinedMetrics = useMemo(
     () => computeCombinedAdjustedMetrics(RAW_RACES_2026, demographicShifts, benchmarkMode),
@@ -151,30 +187,68 @@ export function AffiliationPolicyAnalysis({
     [combinedMetrics]
   );
 
+  const logitAdjustedMap = useMemo(
+    () => new Map(combinedMetrics.map((m) => [m.race.id, m.logitAdjustedResidual])),
+    [combinedMetrics]
+  );
+
   const factionStats = useMemo(() => {
     const raw = aggregateByFaction(
-      RAW_RACES_2026,
+      effectiveRawRaces,
       nationalAvgShift,
-      combinedAdjustedMap
+      combinedAdjustedMap,
+      logitAdjustedMap
     ).map((item) => {
-      const members = STATEWIDE_RACES_2026.filter((r) => r.faction === item.faction).sort(
-        (a, b) =>
-          (combinedByRaceId.get(b.id)?.adjustedDifference ?? 0) -
-          (combinedByRaceId.get(a.id)?.adjustedDifference ?? 0)
-      );
+      const members = effectiveUiRaces
+        .filter((r) => r.faction === item.faction)
+        .sort(
+          (a, b) =>
+            (combinedByRaceId.get(b.id)?.afterMeanResidual ?? 0) -
+            (combinedByRaceId.get(a.id)?.afterMeanResidual ?? 0)
+        );
       return {
         faction: item.faction,
         count: item.count,
         flips: item.flips,
         avgShift: item.avgShift,
         avgMeanAdjusted: item.avgResidual,
+        avgLogitAdjusted: item.avgLogitAdjustedResidual,
         avgCombinedAdjusted: item.avgCombinedAdjustedResidual,
         avgBaseline: item.avgBaseline2024,
         members,
       };
     });
-    return [...raw].sort((a, b) => b.avgCombinedAdjusted - a.avgCombinedAdjusted);
-  }, [nationalAvgShift, combinedAdjustedMap, combinedByRaceId]);
+    return [...raw].sort((a, b) => b.avgMeanAdjusted - a.avgMeanAdjusted);
+  }, [
+    effectiveRawRaces,
+    effectiveUiRaces,
+    nationalAvgShift,
+    combinedAdjustedMap,
+    logitAdjustedMap,
+    combinedByRaceId,
+  ]);
+
+  const filteredAssignmentRows = useMemo(() => {
+    const q = assignmentSearch.trim().toLowerCase();
+    return [...effectiveUiRaces]
+      .filter((race) => {
+        if (assignmentFilterFaction !== 'All' && race.faction !== assignmentFilterFaction) {
+          return false;
+        }
+        if (!q) return true;
+        return (
+          race.featuredCandidate.toLowerCase().includes(q) ||
+          race.stateCode.toLowerCase().includes(q) ||
+          race.stateName.toLowerCase().includes(q) ||
+          race.raceLabel.toLowerCase().includes(q)
+        );
+      })
+      .sort(
+        (a, b) =>
+          (combinedByRaceId.get(b.id)?.afterMeanResidual ?? 0) -
+          (combinedByRaceId.get(a.id)?.afterMeanResidual ?? 0)
+      );
+  }, [effectiveUiRaces, assignmentFilterFaction, assignmentSearch, combinedByRaceId]);
 
   const allExpanded = factionStats.every((f) => Boolean(expandedFactions[f.faction]));
 
@@ -212,6 +286,7 @@ export function AffiliationPolicyAnalysis({
         avgBaseline2024: row.avgBaseline,
         avgRawDiff: row.avgShift,
         avgMeanAdjustedDiff: row.avgMeanAdjusted,
+        avgLogitAdjustedDiff: row.avgLogitAdjusted,
         avgDemoAdjustedDiff: row.avgCombinedAdjusted,
         members: row.members.map((race) => {
           const metrics = combinedByRaceId.get(race.id);
@@ -222,11 +297,15 @@ export function AffiliationPolicyAnalysis({
             office: race.office,
             featuredCandidate: race.featuredCandidate,
             featuredParty: race.featuredParty,
+            assignedFaction: race.faction,
+            defaultFaction: defaultFactionByRaceId.get(race.id) ?? race.faction,
+            reassignedFromDefault: Boolean(factionOverrides[race.id]),
             flipped: race.flipped,
             presMargin2024: race.presMargin2024,
             demOrCoalitionMargin2026: race.demOrCoalitionMargin2026,
             rawDiff: metrics?.rawShift ?? computeRaceShift(race),
             meanAdjustedDiff: metrics?.afterMeanResidual ?? 0,
+            logitAdjustedDiff: metrics?.logitAdjustedResidual ?? 0,
             demographicTilt: metrics?.demographicWeight ?? 0,
             demoAdjustedDiff: metrics?.adjustedDifference ?? 0,
             policyPillars: race.policyPillars,
@@ -257,11 +336,12 @@ export function AffiliationPolicyAnalysis({
       RAW_RACES_2026,
       nationalAvgShift,
       undefined,
-      combinedAdjustedMap
+      combinedAdjustedMap,
+      logitAdjustedMap
     );
     return POLICY_PILLARS.map((pillar) => {
       const agg = aggregates.find((a) => a.pillar === pillar.id);
-      const matching = STATEWIDE_RACES_2026.filter((r) => r.policyPillars.includes(pillar.id));
+      const matching = effectiveUiRaces.filter((r) => r.policyPillars.includes(pillar.id));
       return {
         ...pillar,
         races: matching,
@@ -269,18 +349,19 @@ export function AffiliationPolicyAnalysis({
         flips: agg?.flips ?? 0,
         avgShift: agg?.avgShift ?? 0,
         avgMeanAdjusted: agg?.avgResidual ?? 0,
+        avgLogitAdjusted: agg?.avgLogitAdjustedResidual ?? 0,
         avgCombinedAdjusted: agg?.avgCombinedAdjustedResidual ?? 0,
       };
-    }).sort((a, b) => b.avgCombinedAdjusted - a.avgCombinedAdjusted);
-  }, [nationalAvgShift, combinedAdjustedMap]);
+    }).sort((a, b) => b.avgMeanAdjusted - a.avgMeanAdjusted);
+  }, [nationalAvgShift, combinedAdjustedMap, logitAdjustedMap, effectiveUiRaces]);
 
   const activePolicy = policyStats.find((p) => p.id === selectedPolicy) ?? policyStats[0];
 
   const sortedMatchingRaces = useMemo(() => {
     return [...activePolicy.races].sort(
       (a, b) =>
-        (combinedByRaceId.get(b.id)?.adjustedDifference ?? 0) -
-        (combinedByRaceId.get(a.id)?.adjustedDifference ?? 0)
+        (combinedByRaceId.get(b.id)?.afterMeanResidual ?? 0) -
+        (combinedByRaceId.get(a.id)?.afterMeanResidual ?? 0)
     );
   }, [activePolicy, combinedByRaceId]);
 
@@ -291,24 +372,22 @@ export function AffiliationPolicyAnalysis({
           03 · Comparing Camps &amp; Policy Stances · Looking Past Labels
         </p>
         <h2 className="text-2xl sm:text-3xl font-display font-semibold text-stone-900 mt-1">
-          What Demographic-Adjusted Numbers Say About Party Wing vs. Policy Stances
+          Party Wing vs. Policy Stances: What Actually Moved Voters?
         </h2>
         <p className="text-sm text-stone-600 mt-2 max-w-3xl">
-          With the national wave and each state&apos;s demographic tilt removed, does one
-          ideological wing consistently pull ahead—or do specific pocketbook policy stances explain
-          more than factional labels?
+          With the national wave and state demographics stripped out, compare candidate
+          affiliations alongside eight concrete campaign issue pillars.
         </p>
       </div>
 
       {/* Framework Attribution: Why These 5 Affiliation Groups? */}
-      <div className="mb-8 p-5 sm:p-6 bg-[#F5F2EB] border border-stone-200 rounded-lg">
+      <div className="mb-8 p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
         <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-          Why These Five Affiliation Camps? · Borrowed From Established Typologies
+          How These Five Camps Are Defined
         </p>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-5 text-xs sm:text-sm text-stone-700 leading-relaxed">
-          <div>
-            <p className="font-semibold text-stone-900">
-              1 · Institutional vs. Systemic Left (
+        <div className="mt-2.5 grid grid-cols-1 md:grid-cols-3 gap-5 text-xs sm:text-sm text-stone-700 leading-relaxed">
+          <p>
+            <strong className="text-stone-900">
               <a
                 href="https://www.pewresearch.org/politics/2026/06/10/beyond-red-vs-blue-the-2026-political-typology/"
                 target="_blank"
@@ -317,20 +396,13 @@ export function AffiliationPolicyAnalysis({
               >
                 Pew 2026 Typology
               </a>
-              )
-            </p>
-            <p className="mt-1">
-              Pew&apos;s 9-bloc 2026 Political Typology separates institutional coalitions (
-              <em>Loyal Liberals</em> / <em>Order &amp; Opportunity Left</em> →{' '}
-              <strong>Pragmatic Center-Left</strong>) from systemic reformers (
-              <em>Leftward Progressives</em> → <strong>Progressive Reformer</strong>), alongside
-              right-of-center blocs (<strong>GOP Resilience Hold</strong>).
-            </p>
-          </div>
-
-          <div>
-            <p className="font-semibold text-stone-900">
-              2 · Working-Class Populism (
+              :
+            </strong>{' '}
+            Separates institutional coalitions (<strong>Pragmatic Center-Left</strong>) from
+            systemic wings (<strong>Progressive Reformer</strong>) and GOP holds.
+          </p>
+          <p>
+            <strong className="text-stone-900">
               <a
                 href="https://workingclasspolitics.org/"
                 target="_blank"
@@ -339,19 +411,13 @@ export function AffiliationPolicyAnalysis({
               >
                 CWCP Win-o-Meter
               </a>
-              )
-            </p>
-            <p className="mt-1">
-              Research by the Center for Working-Class Politics (40,000+ survey experiments) shows
-              anti-corporate, pocketbook populism performs differently from progressive cultural
-              branding—prompting separate <strong>Economic Populist &amp; Labor</strong> and
-              non-party <strong>Independent Populist</strong> lanes.
-            </p>
-          </div>
-
-          <div>
-            <p className="font-semibold text-stone-900">
-              3 · Benchmarking via Residuals (
+              :
+            </strong>{' '}
+            Shows anti-corporate pocketbook campaigns perform distinctly, motivating separate{' '}
+            <strong>Economic Populist</strong> and <strong>Independent</strong> lanes.
+          </p>
+          <p>
+            <strong className="text-stone-900">
               <a
                 href="https://split-ticket.org/full-wins-above-replacement-war-database/"
                 target="_blank"
@@ -360,14 +426,10 @@ export function AffiliationPolicyAnalysis({
               >
                 Split Ticket WAR
               </a>
-              )
-            </p>
-            <p className="mt-1">
-              Split Ticket&apos;s <em>Wins Above Replacement (WAR)</em> database benchmarks
-              candidates by subtracting predicted baselines from final margins—testing whether
-              moderate overperformance persists after demographic composition is removed.
-            </p>
-          </div>
+              :
+            </strong>{' '}
+            Benchmarks each camp by residual margin above state baseline and demographic tilt.
+          </p>
         </div>
       </div>
 
@@ -453,9 +515,20 @@ export function AffiliationPolicyAnalysis({
                   <ColumnHeaderTooltip
                     id="mean-adj"
                     label="Mean-Adj."
-                    title="Mean-Adjusted Difference"
-                    description="Average candidate residual after subtracting only the National Mean Tide (+15.3 unweighted)."
+                    title="Mean-Adjusted Difference (Default)"
+                    description={`Average residual after subtracting only the National Mean Tide (+${nationalAvgShift.toFixed(1)} ${benchmarkMode === 'unweighted' ? 'unweighted' : 'ballot-weighted'}).`}
                     formula="Raw Diff. − National Mean Tide"
+                    openId={openTooltipId}
+                    setOpenId={setOpenTooltipId}
+                  />
+                </th>
+                <th className="py-3 px-4 font-medium text-right">
+                  <ColumnHeaderTooltip
+                    id="logit-adj"
+                    label="Logit-Adj."
+                    title="Logit-Adjusted (Potential Gain)"
+                    description="Potential-gain residual from fitting log-odds regression across all 42 races so safe seats with limited ceiling room aren't over-penalized."
+                    formula="Margin_26 − invLogit(α + β·logit(Margin_24))"
                     openId={openTooltipId}
                     setOpenId={setOpenTooltipId}
                   />
@@ -541,8 +614,8 @@ export function AffiliationPolicyAnalysis({
                             </div>
                             <ul className="space-y-1 max-h-56 overflow-y-auto pr-1 text-[11px]">
                               {row.members.map((member) => {
-                                const adj =
-                                  combinedByRaceId.get(member.id)?.adjustedDifference ?? 0;
+                                const meanAdj =
+                                  combinedByRaceId.get(member.id)?.afterMeanResidual ?? 0;
                                 return (
                                   <li
                                     key={member.id}
@@ -554,10 +627,10 @@ export function AffiliationPolicyAnalysis({
                                     </span>
                                     <span
                                       className={`font-mono tabular-nums shrink-0 ${
-                                        adj >= 0 ? 'text-[#5EEAD4]' : 'text-[#FDBA74]'
+                                        meanAdj >= 0 ? 'text-[#5EEAD4]' : 'text-[#FDBA74]'
                                       }`}
                                     >
-                                      {formatSignedMargin(adj)}
+                                      {formatSignedMargin(meanAdj)}
                                     </span>
                                   </li>
                                 );
@@ -583,6 +656,15 @@ export function AffiliationPolicyAnalysis({
                           {formatSignedMargin(row.avgMeanAdjusted)} pts
                         </span>
                       </td>
+                      <td className="py-4 px-4 text-right font-mono tabular-nums">
+                        <span
+                          className={`font-semibold block ${
+                            row.avgLogitAdjusted >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                          }`}
+                        >
+                          {formatSignedMargin(row.avgLogitAdjusted)} pts
+                        </span>
+                      </td>
                       <td className="py-4 px-6 text-right font-mono tabular-nums">
                         <span
                           className={`font-semibold block ${
@@ -596,12 +678,12 @@ export function AffiliationPolicyAnalysis({
 
                     {isExpanded && (
                       <tr className="bg-[#FBF9F5]">
-                        <td colSpan={6} className="px-6 py-5 border-t border-stone-200">
+                        <td colSpan={7} className="px-6 py-5 border-t border-stone-200">
                           <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5">
                             <div>
                               <p className="text-xs uppercase tracking-wider text-stone-500 font-medium">
                                 Complete {row.faction} Roster · {row.count} Contests (Ranked by
-                                Demo-Adjusted Diff.)
+                                Mean-Adjusted Diff.)
                               </p>
                             </div>
                             <button
@@ -622,6 +704,7 @@ export function AffiliationPolicyAnalysis({
                               const metrics = combinedByRaceId.get(member.id);
                               const rawShift = metrics?.rawShift ?? computeRaceShift(member);
                               const meanAdj = metrics?.afterMeanResidual ?? 0;
+                              const logitAdj = metrics?.logitAdjustedResidual ?? 0;
                               const adjDiff = metrics?.adjustedDifference ?? 0;
 
                               return (
@@ -646,10 +729,10 @@ export function AffiliationPolicyAnalysis({
                                       </span>
                                       <span
                                         className={`font-mono text-xs font-semibold tabular-nums shrink-0 ${
-                                          adjDiff >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
+                                          meanAdj >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
                                         }`}
                                       >
-                                        {formatSignedMargin(adjDiff)} demo
+                                        {formatSignedMargin(meanAdj)} mean
                                       </span>
                                     </div>
                                     <div className="mt-1 flex items-center justify-between gap-2 font-mono text-[10px] text-stone-600 tabular-nums">
@@ -659,9 +742,10 @@ export function AffiliationPolicyAnalysis({
                                       </span>
                                       <span className="shrink-0">
                                         <span className="text-[#1E3A8A]">
-                                          {formatSignedMargin(rawShift)} raw
+                                          {formatSignedMargin(rawShift)}r
                                         </span>{' '}
-                                        · {formatSignedMargin(meanAdj)} mean
+                                        · {formatSignedMargin(logitAdj)}l ·{' '}
+                                        {formatSignedMargin(adjDiff)}d
                                       </span>
                                     </div>
                                   </div>
@@ -688,20 +772,224 @@ export function AffiliationPolicyAnalysis({
             const pop = factionStats.find((f) => f.faction === 'Economic Populist & Labor');
             const ctr = factionStats.find((f) => f.faction === 'Pragmatic Center-Left');
             const gop = factionStats.find((f) => f.faction === 'GOP Resilience Hold');
-            return `Once national tide and demographic tilt are subtracted, Pragmatic Center-Left (${formatSignedMargin(ctr?.avgCombinedAdjusted ?? 1.4)} pts across ${ctr?.count ?? 22} races) and Economic Populist & Labor (${formatSignedMargin(pop?.avgCombinedAdjusted ?? 1.1)} pts across ${pop?.count ?? 5} races, ${pop?.flips ?? 4} flips) post very similar positive residuals. GOP Resilience Holds (${formatSignedMargin(gop?.avgCombinedAdjusted ?? 2.3)} pts D-shift) reflect large swings in predominantly white R+25+ states despite Florida holds, while Progressive Reformers sit at ${formatSignedMargin(prog?.avgCombinedAdjusted ?? -9.7)} pts largely because four of five ran in heavily blue states (MA, MN, OR, MI) plus Maine's crossover Senate baseline.`;
+            return `Ranked by Mean-Adjusted Diff., Economic Populist & Labor (${formatSignedMargin(pop?.avgMeanAdjusted ?? 2.0)} pts, ${pop?.flips ?? 4} flips) and Pragmatic Center-Left (${formatSignedMargin(ctr?.avgMeanAdjusted ?? 1.9)} pts, ${ctr?.flips ?? 8} flips) finish virtually tied. Under Logit-Adjusted potential gain, Pragmatic Center-Left (${formatSignedMargin(ctr?.avgLogitAdjusted ?? 2.8)} pts) leads Economic Populist (${formatSignedMargin(pop?.avgLogitAdjusted ?? 1.1)} pts), while GOP Resilience Holds flip from ${formatSignedMargin(gop?.avgMeanAdjusted ?? 1.7)} mean to ${formatSignedMargin(gop?.avgLogitAdjusted ?? -1.4)} logit and Progressive Reformers narrow from ${formatSignedMargin(prog?.avgMeanAdjusted ?? -11.2)} to ${formatSignedMargin(prog?.avgLogitAdjusted ?? -8.1)}.`;
           })()}
         </div>
       </div>
 
-      {/* Policy Pillar Attribution Box: Where Do These 8 Policy Pillars Come From? */}
-      <div className="mb-8 p-5 sm:p-6 bg-[#F5F2EB] border border-stone-200 rounded-lg">
+      {/* Part A.2: Interactive Candidate Affiliation Assignment Table */}
+      {onChangeFaction && (
+        <div className="bg-white border border-stone-200 rounded-lg mb-10 overflow-hidden">
+          <div className="px-6 py-4 border-b border-stone-200 bg-[#F7F4EE] flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-display font-semibold text-stone-900">
+                  Reassign Candidate Affiliation Groups
+                </h3>
+                {overrideCount > 0 && (
+                  <span className="font-mono text-xs text-[#1E3A8A] font-medium">
+                    · {overrideCount} customized
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-stone-600 mt-0.5">
+                Classify anyone differently? Switch any candidate&apos;s camp below—the group
+                averages above, map tags, and Section 05 summary recalculate live.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {overrideCount > 0 && onResetFactions && (
+                <button
+                  type="button"
+                  onClick={onResetFactions}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white border border-stone-300 rounded hover:border-stone-500 text-stone-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset Defaults</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsAssignmentTableOpen((prev) => !prev)}
+                aria-expanded={isAssignmentTableOpen}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-white border border-stone-300 rounded hover:border-stone-500 text-stone-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {isAssignmentTableOpen ? (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                )}
+                <span>{isAssignmentTableOpen ? 'Hide Table' : 'Edit Assignments (42)'}</span>
+              </button>
+            </div>
+          </div>
+
+          {isAssignmentTableOpen && (
+            <div>
+              <div className="px-6 py-3 border-b border-stone-200 bg-[#FBF9F5] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                  <label htmlFor="assign-filter-camp" className="text-stone-500">
+                    Camp:
+                  </label>
+                  <select
+                    id="assign-filter-camp"
+                    value={assignmentFilterFaction}
+                    onChange={(e) =>
+                      setAssignmentFilterFaction(e.target.value as FactionLane | 'All')
+                    }
+                    className="bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 focus:outline-2 focus:outline-[#1E3A8A]"
+                  >
+                    <option value="All">All Camps ({effectiveUiRaces.length})</option>
+                    {ALL_FACTIONS.map((faction) => {
+                      const count = effectiveUiRaces.filter((r) => r.faction === faction).length;
+                      return (
+                        <option key={faction} value={faction}>
+                          {faction} ({count})
+                        </option>
+                      );
+                    })}
+                  </select>
+
+                  <input
+                    type="search"
+                    aria-label="Filter candidates by name or state"
+                    placeholder="Filter candidate or state..."
+                    value={assignmentSearch}
+                    onChange={(e) => setAssignmentSearch(e.target.value)}
+                    className="bg-white border border-stone-300 rounded px-2.5 py-1.5 text-xs text-stone-800 placeholder:text-stone-400 w-48 sm:w-56 focus:outline-2 focus:outline-[#1E3A8A]"
+                  />
+                </div>
+                <span className="text-[11px] font-mono text-stone-500 tabular-nums">
+                  Showing {filteredAssignmentRows.length} of {effectiveUiRaces.length} candidates
+                </span>
+              </div>
+
+              <div className="overflow-x-auto max-h-[380px] overflow-y-auto">
+                <table className="w-full text-left border-collapse min-w-[740px] text-xs sm:text-sm">
+                  <thead className="sticky top-0 bg-[#FBF9F5] border-b border-stone-200 text-xs text-stone-500 z-10">
+                    <tr>
+                      <th className="py-2.5 px-6 font-medium">Candidate &amp; Race</th>
+                      <th className="py-2.5 px-3 font-medium text-right">Raw Diff.</th>
+                      <th className="py-2.5 px-3 font-medium text-right">Mean-Adj.</th>
+                      <th className="py-2.5 px-3 font-medium text-right">Logit-Adj.</th>
+                      <th className="py-2.5 px-3 font-medium text-right">Demo-Adj.</th>
+                      <th className="py-2.5 px-6 font-medium text-right">Affiliation Group</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-200">
+                    {filteredAssignmentRows.map((race) => {
+                      const metrics = combinedByRaceId.get(race.id);
+                      const rawShift = metrics?.rawShift ?? computeRaceShift(race);
+                      const meanAdj = metrics?.afterMeanResidual ?? 0;
+                      const logitAdj = metrics?.logitAdjustedResidual ?? 0;
+                      const demoAdj = metrics?.adjustedDifference ?? 0;
+                      const isOverridden = race.faction !== race.defaultFaction;
+
+                      return (
+                        <tr
+                          key={race.id}
+                          className={isOverridden ? 'bg-[#F5F2EB]/70' : 'hover:bg-stone-50/80'}
+                        >
+                          <td className="py-2.5 px-6">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectState(race.stateCode);
+                                document
+                                  .getElementById('state-map')
+                                  ?.scrollIntoView({ behavior: 'smooth' });
+                              }}
+                              className="text-left group cursor-pointer"
+                            >
+                              <span className="font-semibold text-stone-900 group-hover:text-[#1E3A8A] group-hover:underline underline-offset-2">
+                                {race.featuredCandidate} ({race.featuredParty}) · {race.stateCode}{' '}
+                                {race.office === 'Senate' ? 'Sen' : 'Gov'}
+                              </span>
+                              <span className="block text-[11px] text-stone-500 font-mono tabular-nums">
+                                2024: {formatPartyMargin(race.presMargin2024)} →{' '}
+                                {formatPartyMargin(race.demOrCoalitionMargin2026)}
+                                {race.flipped ? ' · Flipped' : ''}
+                              </span>
+                            </button>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[#1E3A8A]">
+                            {formatSignedMargin(rawShift)}
+                          </td>
+                          <td
+                            className={`py-2.5 px-3 text-right font-mono font-semibold tabular-nums ${
+                              meanAdj >= 0 ? 'text-stone-900' : 'text-[#9A3412]'
+                            }`}
+                          >
+                            {formatSignedMargin(meanAdj)}
+                          </td>
+                          <td
+                            className={`py-2.5 px-3 text-right font-mono tabular-nums ${
+                              logitAdj >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                            }`}
+                          >
+                            {formatSignedMargin(logitAdj)}
+                          </td>
+                          <td
+                            className={`py-2.5 px-3 text-right font-mono tabular-nums ${
+                              demoAdj >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
+                            }`}
+                          >
+                            {formatSignedMargin(demoAdj)}
+                          </td>
+                          <td className="py-2.5 px-6 text-right">
+                            <div className="inline-flex flex-col items-end gap-1">
+                              <select
+                                aria-label={`Affiliation group for ${race.featuredCandidate} (${race.id})`}
+                                value={race.faction}
+                                onChange={(e) =>
+                                  onChangeFaction(race.id, e.target.value as FactionLane)
+                                }
+                                className={`bg-white border rounded px-2.5 py-1.5 text-xs text-stone-900 focus:outline-2 focus:outline-[#1E3A8A] cursor-pointer ${
+                                  isOverridden
+                                    ? 'border-[#1E3A8A] font-medium'
+                                    : 'border-stone-300'
+                                }`}
+                              >
+                                {ALL_FACTIONS.map((faction) => (
+                                  <option key={faction} value={faction}>
+                                    {faction}
+                                  </option>
+                                ))}
+                              </select>
+                              {isOverridden && (
+                                <span className="text-[10px] text-stone-500">
+                                  Default: {race.defaultFaction}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredAssignmentRows.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-6 px-6 text-center text-xs text-stone-500">
+                          No candidates match the current filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Policy Pillar Attribution Box */}
+      <div className="mb-8 p-5 bg-[#F5F2EB] border border-stone-200 rounded-lg">
         <p className="text-xs uppercase tracking-widest text-stone-500 font-medium">
-          Where These Eight Policy Pillars Come From · Exit-Poll Salience &amp; Campaign Platforms
+          Where These Eight Policy Pillars Come From
         </p>
-        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-5 text-xs sm:text-sm text-stone-700 leading-relaxed">
-          <div>
-            <p className="font-semibold text-stone-900">
-              1 · Post-Election Voter Salience (
+        <div className="mt-2.5 grid grid-cols-1 md:grid-cols-3 gap-5 text-xs sm:text-sm text-stone-700 leading-relaxed">
+          <p>
+            <strong className="text-stone-900">
+              Exit-Poll Salience (
               <a
                 href="https://ssrs.com/the-voter-poll-by-ssrs/"
                 target="_blank"
@@ -709,8 +997,8 @@ export function AffiliationPolicyAnalysis({
                 className="text-[#1E3A8A] underline underline-offset-2"
               >
                 SSRS
-              </a>{' '}
-              &amp;{' '}
+              </a>
+              ,{' '}
               <a
                 href="https://www.brookings.edu/articles/the-midterm-effect-what-the-2026-election-could-mean-for-public-policy/"
                 target="_blank"
@@ -719,19 +1007,14 @@ export function AffiliationPolicyAnalysis({
               >
                 Brookings
               </a>
-              )
-            </p>
-            <p className="mt-1">
-              Our eight issue categories mirror the core policy themes tracked in 2026 exit surveys
-              and Brookings / <em>El País</em> post-election reviews: inflation and grocery/utility
-              costs, Medicaid &amp; healthcare, tariffs, housing permitting/energy, and reproductive
-              rights.
-            </p>
-          </div>
-
-          <div>
-            <p className="font-semibold text-stone-900">
-              2 · Verified Campaign Platforms (
+              ):
+            </strong>{' '}
+            Mirrors the top 2026 voter issues—inflation, Medicaid, tariffs, permitting, and
+            reproductive rights.
+          </p>
+          <p>
+            <strong className="text-stone-900">
+              Campaign Platforms (
               <a
                 href="https://ballotpedia.org/United_States_Senate_elections,_2026"
                 target="_blank"
@@ -739,8 +1022,8 @@ export function AffiliationPolicyAnalysis({
                 className="text-[#1E3A8A] underline underline-offset-2"
               >
                 Ballotpedia
-              </a>{' '}
-              &amp;{' '}
+              </a>
+              ,{' '}
               <a
                 href="https://apnews.com/hub/2026-midterm-election"
                 target="_blank"
@@ -749,27 +1032,16 @@ export function AffiliationPolicyAnalysis({
               >
                 AP
               </a>
-              )
-            </p>
-            <p className="mt-1">
-              Each race&apos;s tags are drawn from candidates&apos; official issue pages, debate
-              priorities, and race profiles compiled by Ballotpedia, Associated Press, PBS
-              NewsHour, and Cook Political Report—capturing concrete legislative priorities (e.g.,
-              anti-voucher school funding, state audits, or farm-tariff relief).
-            </p>
-          </div>
-
-          <div>
-            <p className="font-semibold text-stone-900">
-              3 · Multi-Issue Tagging Across Wings
-            </p>
-            <p className="mt-1">
-              Unlike mutually exclusive affiliation camps, candidates carry <strong>2 to 4</strong>{' '}
-              signature policy pillars. Comparing races by policy pillar lets us test whether
-              specific pocketbook commitments—like <em>Trade &amp; Tariffs</em> or{' '}
-              <em>Public Education</em>—traveled cleanly across partisan wings.
-            </p>
-          </div>
+              ):
+            </strong>{' '}
+            Tags come directly from official candidate issue pages, debates, and Cook/AP race
+            profiles.
+          </p>
+          <p>
+            <strong className="text-stone-900">Cross-Wing Issue Overlap:</strong> Each race carries{' '}
+            <strong>2–4 pillars</strong>, letting us test whether concrete stances beat party
+            labels.
+          </p>
         </div>
       </div>
 
@@ -801,8 +1073,9 @@ export function AffiliationPolicyAnalysis({
                       }`}
                     >
                       {pillar.count} races · {pillar.flips} flips ·{' '}
+                      {formatSignedMargin(pillar.avgLogitAdjusted)} logit ·{' '}
                       {formatSignedMargin(pillar.avgShift)} raw ·{' '}
-                      {formatSignedMargin(pillar.avgMeanAdjusted)} mean
+                      {formatSignedMargin(pillar.avgCombinedAdjusted)} demo
                     </span>
                   </div>
                   <div className="text-right font-mono text-xs tabular-nums shrink-0">
@@ -810,12 +1083,12 @@ export function AffiliationPolicyAnalysis({
                       className={`font-semibold block ${
                         isActive
                           ? 'text-[#93C5FD]'
-                          : pillar.avgCombinedAdjusted >= 0
+                          : pillar.avgMeanAdjusted >= 0
                           ? 'text-[#0F766E]'
                           : 'text-[#9A3412]'
                       }`}
                     >
-                      {formatSignedMargin(pillar.avgCombinedAdjusted)} demo
+                      {formatSignedMargin(pillar.avgMeanAdjusted)} mean
                     </span>
                   </div>
                 </button>
@@ -837,18 +1110,26 @@ export function AffiliationPolicyAnalysis({
               </div>
               <div className="text-right font-mono tabular-nums">
                 <span className="block text-[11px] text-stone-500">
-                  Raw Diff. / Mean-Adj. / Demo-Adj.
+                  Mean-Adj. / Logit-Adj. / Raw / Demo-Adj.
                 </span>
-                <span className="text-sm font-semibold text-[#1E3A8A]">
-                  {formatSignedMargin(activePolicy.avgShift)}
-                </span>{' '}
-                <span className="text-stone-400">/</span>{' '}
                 <span
                   className={`text-sm font-semibold ${
                     activePolicy.avgMeanAdjusted >= 0 ? 'text-stone-900' : 'text-[#9A3412]'
                   }`}
                 >
                   {formatSignedMargin(activePolicy.avgMeanAdjusted)}
+                </span>{' '}
+                <span className="text-stone-400">/</span>{' '}
+                <span
+                  className={`text-sm font-semibold ${
+                    activePolicy.avgLogitAdjusted >= 0 ? 'text-[#4338CA]' : 'text-[#9A3412]'
+                  }`}
+                >
+                  {formatSignedMargin(activePolicy.avgLogitAdjusted)}
+                </span>{' '}
+                <span className="text-stone-400">/</span>{' '}
+                <span className="text-sm font-semibold text-[#1E3A8A]">
+                  {formatSignedMargin(activePolicy.avgShift)}
                 </span>{' '}
                 <span className="text-stone-400">/</span>{' '}
                 <span
@@ -869,13 +1150,14 @@ export function AffiliationPolicyAnalysis({
 
             <div className="mt-5">
               <h4 className="text-xs uppercase tracking-wider text-stone-500 font-medium mb-2.5">
-                Candidates Emphasizing This Pillar (Ranked by Demo-Adjusted Diff.)
+                Candidates Emphasizing This Pillar (Ranked by Mean-Adjusted Diff.)
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[260px] overflow-y-auto pr-1">
                 {sortedMatchingRaces.map((race) => {
                   const metrics = combinedByRaceId.get(race.id);
                   const shift = metrics?.rawShift ?? computeRaceShift(race);
                   const meanAdj = metrics?.afterMeanResidual ?? 0;
+                  const logitAdj = metrics?.logitAdjustedResidual ?? 0;
                   const adjDiff = metrics?.adjustedDifference ?? 0;
 
                   return (
@@ -895,16 +1177,17 @@ export function AffiliationPolicyAnalysis({
                         </span>
                         <span
                           className={`font-mono text-xs font-semibold tabular-nums shrink-0 ${
-                            adjDiff >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
+                            meanAdj >= 0 ? 'text-[#0F766E]' : 'text-[#9A3412]'
                           }`}
                         >
-                          {formatSignedMargin(adjDiff)} demo
+                          {formatSignedMargin(meanAdj)} mean
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-stone-500">
                         <span className="truncate">{race.faction}</span>
                         <span className="font-mono tabular-nums shrink-0">
-                          {formatSignedMargin(shift)} raw · {formatSignedMargin(meanAdj)} mean
+                          {formatSignedMargin(logitAdj)} logit · {formatSignedMargin(shift)} raw ·{' '}
+                          {formatSignedMargin(adjDiff)} demo
                         </span>
                       </div>
                     </button>

@@ -107,6 +107,10 @@ export interface CombinedAdjustedMetrics {
   adjustedDemographicBenchmark: number;
   /** Residual after subtracting only the national mean tide */
   afterMeanResidual: number;
+  /** Expected shift under fitted log-odds (logit) potential-gain curve */
+  logitExpectedShift: number;
+  /** Potential-gain residual: Margin_2026 - invLogit(alpha + beta * logit(Margin_2024)) */
+  logitAdjustedResidual: number;
   /** Final Demographic-Adjusted Difference: Raw Shift − (National Mean + Demographic Tilt) */
   adjustedDifference: number;
 }
@@ -118,6 +122,7 @@ export interface FactionAggregate {
   avgBaseline2024: number;
   avgShift: number;
   avgResidual: number;
+  avgLogitAdjustedResidual: number;
   avgCombinedAdjustedResidual: number;
 }
 
@@ -127,8 +132,14 @@ export interface PolicyAggregate {
   flips: number;
   avgShift: number;
   avgResidual: number;
+  avgLogitAdjustedResidual: number;
   avgCombinedAdjustedResidual: number;
   raceIds: string[];
+}
+
+export interface LogitModelParams {
+  alpha: number;
+  beta: number;
 }
 
 export interface ElectionAnalysisReport {
@@ -137,6 +148,7 @@ export interface ElectionAnalysisReport {
   raceCount: number;
   nationalAverageShift: number;
   meanPureDemographicShift: number;
+  logitModelParams: LogitModelParams;
   demographicShiftsUsed: NationalDemographicShifts;
   raceMetrics: RaceShiftMetrics[];
   combinedAdjustedMetrics: CombinedAdjustedMetrics[];

@@ -1,5 +1,9 @@
 import { DEFAULT_NATIONAL_DEMOGRAPHIC_SHIFTS, STATE_CVAP_DEMOGRAPHICS } from './datasets';
-import { computeNationalAverageShift, computeRaceShift } from './shiftModel';
+import {
+  computeLogitPotentialMetrics,
+  computeNationalAverageShift,
+  computeRaceShift,
+} from './shiftModel';
 import {
   BenchmarkMode,
   CombinedAdjustedMetrics,
@@ -123,6 +127,7 @@ export function computeCombinedAdjustedMetrics(
 ): CombinedAdjustedMetrics[] {
   const meanWeight = computeNationalAverageShift(races, mode);
   const meanPureDemo = computeMeanPureDemographicShift(races, shifts, mode, profiles);
+  const { byRaceId: logitByRaceId } = computeLogitPotentialMetrics(races, mode);
 
   return races
     .filter((r) => Boolean(profiles[r.stateCode]))
@@ -133,6 +138,9 @@ export function computeCombinedAdjustedMetrics(
       const demographicWeight = Number((pureDemographicShift - meanPureDemo).toFixed(2));
       const adjustedDemographicBenchmark = Number((meanWeight + demographicWeight).toFixed(2));
       const afterMeanResidual = Number((rawShift - meanWeight).toFixed(2));
+      const logitEntry = logitByRaceId.get(race.id);
+      const logitExpectedShift = logitEntry?.expectedShift ?? meanWeight;
+      const logitAdjustedResidual = logitEntry?.logitAdjustedResidual ?? afterMeanResidual;
       const adjustedDifference = Number(
         (rawShift - adjustedDemographicBenchmark).toFixed(2)
       );
@@ -146,6 +154,8 @@ export function computeCombinedAdjustedMetrics(
         pureDemographicShift,
         adjustedDemographicBenchmark,
         afterMeanResidual,
+        logitExpectedShift,
+        logitAdjustedResidual,
         adjustedDifference,
       };
     });

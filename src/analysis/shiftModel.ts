@@ -2,6 +2,7 @@ import {
   BenchmarkMode,
   FactionAggregate,
   FactionLane,
+  LogitModelParams,
   PolicyAggregate,
   PolicyPillar,
   RaceShiftMetrics,
@@ -26,6 +27,104 @@ export const ALL_POLICY_PILLARS: PolicyPillar[] = [
   'Trade & Tariffs',
   'Permitting & Energy',
 ];
+
+export function marginToTwoPartyShare(margin: number): number {
+  return Math.min(0.995, Math.max(0.005, 0.5 + margin / 200));
+}
+
+export function twoPartyShareToMargin(share: number): number {
+  return (share - 0.5) * 200;
+}
+
+export function logit(p: number): number {
+  const clamped = Math.min(0.995, Math.max(0.005, p));
+  return Math.log(clamped / (1 - clamped));
+}
+
+export function invLogit(l: number): number {
+  return 1 / (1 + Math.exp(-l));
+}
+
+/**
+ * Fits a potential-gain curve in log-odds space:
+ *   logit(p_2026) = alpha + beta * logit(p_2024)
+ * where p = 0.5 + Margin / 200.
+ * Captures both the national logit wave (alpha) and ceiling/floor compression (beta < 1).
+ */
+export function fitLogitShiftModel(
+  races: StatewideRaceInput[],
+  mode: BenchmarkMode = 'unweighted'
+): LogitModelParams {
+  if (races.length === 0) return { alpha: 0, beta: 1 };
+
+  const weights = races.map((r) => (mode === 'weighted' ? r.votesMillions : 1));
+  const wSum = weights.reduce((s, w) => s + w, 0);
+  if (wSum === 0) return { alpha: 0, beta: 1 };
+
+  const xs = races.map((r) => logit(marginToTwoPartyShare(r.presMargin2024)));
+  const ys = races.map((r) => logit(marginToTwoPartyShare(r.demOrCoalitionMargin2026)));
+
+  const meanX = xs.reduce((s, x, i) => s + weights[i] * x, 0) / wSum;
+  const meanY = ys.reduce((s, y, i) => s + weights[i] * y, 0) / wSum;
+
+  const cov = xs.reduce((s, x, i) => s + weights[i] * (x - meanX) * (ys[i] - meanY), 0);
+  const varX = xs.reduce((s, x, i) => s + weights[i] * (x - meanX) ** 2, 0);
+
+  const beta = varX > 0 ? cov / varX : 1;
+  const alpha = meanY - beta * meanX;
+
+  return {
+    alpha: Number(alpha.toFixed(4)),
+    beta: Number(beta.toFixed(4)),
+  };
+}
+
+export function predictLogitExpectedMargin(
+  presMargin2024: number,
+  params: LogitModelParams
+): number {
+  const l24 = logit(marginToTwoPartyShare(presMargin2024));
+  const expectedShare = invLogit(params.alpha + params.beta * l24);
+  return twoPartyShareToMargin(expectedShare);
+}
+
+export function computeLogitPotentialMetrics(
+  races: StatewideRaceInput[],
+  mode: BenchmarkMode = 'unweighted'
+): {
+  params: LogitModelParams;
+  byRaceId: Map<
+    string,
+    {
+      expectedMargin2026: number;
+      expectedShift: number;
+      logitAdjustedResidual: number;
+    }
+  >;
+} {
+  const params = fitLogitShiftModel(races, mode);
+  const byRaceId = new Map<
+    string,
+    {
+      expectedMargin2026: number;
+      expectedShift: number;
+      logitAdjustedResidual: number;
+    }
+  >();
+
+  for (const race of races) {
+    const expectedMargin2026 = predictLogitExpectedMargin(race.presMargin2024, params);
+    const expectedShift = expectedMargin2026 - race.presMargin2024;
+    const logitAdjustedResidual = race.demOrCoalitionMargin2026 - expectedMargin2026;
+    byRaceId.set(race.id, {
+      expectedMargin2026: Number(expectedMargin2026.toFixed(2)),
+      expectedShift: Number(expectedShift.toFixed(2)),
+      logitAdjustedResidual: Number(logitAdjustedResidual.toFixed(2)),
+    });
+  }
+
+  return { params, byRaceId };
+}
 
 /**
  * Computes raw partisan shift (in percentage points toward Democrats / non-GOP coalition)
@@ -83,7 +182,8 @@ export function computeAllRaceMetrics(
 export function aggregateByFaction(
   races: StatewideRaceInput[],
   benchmarkShift: number,
-  combinedAdjustedByRaceId?: Map<string, number>
+  combinedAdjustedByRaceId?: Map<string, number>,
+  logitAdjustedByRaceId?: Map<string, number>
 ): FactionAggregate[] {
   return ALL_FACTIONS.map((faction) => {
     const matching = races.filter((r) => r.faction === faction);
@@ -98,6 +198,7 @@ export function aggregateByFaction(
         avgBaseline2024: 0,
         avgShift: 0,
         avgResidual: 0,
+        avgLogitAdjustedResidual: 0,
         avgCombinedAdjustedResidual: 0,
       };
     }
@@ -112,6 +213,17 @@ export function aggregateByFaction(
       (
         matching.reduce(
           (s, r) => s + computeResidualOverperformance(r, benchmarkShift),
+          0
+        ) / count
+      ).toFixed(2)
+    );
+    const avgLogitAdjustedResidual = Number(
+      (
+        matching.reduce(
+          (s, r) =>
+            s +
+            (logitAdjustedByRaceId?.get(r.id) ??
+              computeResidualOverperformance(r, benchmarkShift)),
           0
         ) / count
       ).toFixed(2)
@@ -135,6 +247,7 @@ export function aggregateByFaction(
       avgBaseline2024,
       avgShift,
       avgResidual,
+      avgLogitAdjustedResidual,
       avgCombinedAdjustedResidual,
     };
   });
@@ -144,7 +257,8 @@ export function aggregateByPolicy(
   races: StatewideRaceInput[],
   benchmarkShift: number,
   pillars: PolicyPillar[] = ALL_POLICY_PILLARS,
-  combinedAdjustedByRaceId?: Map<string, number>
+  combinedAdjustedByRaceId?: Map<string, number>,
+  logitAdjustedByRaceId?: Map<string, number>
 ): PolicyAggregate[] {
   return pillars.map((pillar) => {
     const matching = races.filter((r) => r.policyPillars.includes(pillar));
@@ -158,6 +272,7 @@ export function aggregateByPolicy(
         flips: 0,
         avgShift: 0,
         avgResidual: 0,
+        avgLogitAdjustedResidual: 0,
         avgCombinedAdjustedResidual: 0,
         raceIds: [],
       };
@@ -170,6 +285,17 @@ export function aggregateByPolicy(
       (
         matching.reduce(
           (s, r) => s + computeResidualOverperformance(r, benchmarkShift),
+          0
+        ) / count
+      ).toFixed(2)
+    );
+    const avgLogitAdjustedResidual = Number(
+      (
+        matching.reduce(
+          (s, r) =>
+            s +
+            (logitAdjustedByRaceId?.get(r.id) ??
+              computeResidualOverperformance(r, benchmarkShift)),
           0
         ) / count
       ).toFixed(2)
@@ -192,6 +318,7 @@ export function aggregateByPolicy(
       flips,
       avgShift,
       avgResidual,
+      avgLogitAdjustedResidual,
       avgCombinedAdjustedResidual,
       raceIds: matching.map((r) => r.id),
     };

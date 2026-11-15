@@ -14,6 +14,7 @@ import {
   aggregateByPolicy,
   computeAllRaceMetrics,
   computeNationalAverageShift,
+  fitLogitShiftModel,
 } from './shiftModel';
 import { BenchmarkMode, ElectionAnalysisReport, NationalDemographicShifts } from './types';
 
@@ -34,6 +35,7 @@ export function buildFullAnalysisReport(options?: {
     demographicShifts,
     benchmarkMode
   );
+  const logitModelParams = fitLogitShiftModel(RAW_RACES_2026, benchmarkMode);
   const combinedAdjustedMetrics = computeCombinedAdjustedMetrics(
     RAW_RACES_2026,
     demographicShifts,
@@ -42,6 +44,9 @@ export function buildFullAnalysisReport(options?: {
   const combinedMap = new Map(
     combinedAdjustedMetrics.map((m) => [m.race.id, m.adjustedDifference])
   );
+  const logitMap = new Map(
+    combinedAdjustedMetrics.map((m) => [m.race.id, m.logitAdjustedResidual])
+  );
 
   return {
     generatedAt: new Date().toISOString(),
@@ -49,6 +54,7 @@ export function buildFullAnalysisReport(options?: {
     raceCount: RAW_RACES_2026.length,
     nationalAverageShift,
     meanPureDemographicShift,
+    logitModelParams,
     demographicShiftsUsed: demographicShifts,
     raceMetrics: computeAllRaceMetrics(RAW_RACES_2026, nationalAverageShift),
     combinedAdjustedMetrics,
@@ -60,13 +66,15 @@ export function buildFullAnalysisReport(options?: {
     factionAggregates: aggregateByFaction(
       RAW_RACES_2026,
       nationalAverageShift,
-      combinedMap
+      combinedMap,
+      logitMap
     ),
     policyAggregates: aggregateByPolicy(
       RAW_RACES_2026,
       nationalAverageShift,
       undefined,
-      combinedMap
+      combinedMap,
+      logitMap
     ),
   };
 }
