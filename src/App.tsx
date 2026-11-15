@@ -1,5 +1,6 @@
 import { ExternalLink } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import editorialDeskHero from './assets/images/editorial_election_desk_1794672227514.jpg';
 import { AffiliationPolicyAnalysis } from './components/AffiliationPolicyAnalysis';
 import { DemographicStorySection } from './components/DemographicStorySection';
 import { MethodologyModal } from './components/MethodologyModal';
@@ -144,7 +145,7 @@ export default function App() {
             <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-[#EFECE5] aspect-[16/9] max-h-[480px] w-full">
               {!heroImageError ? (
                 <img
-                  src="/src/assets/images/editorial_election_desk_1794672227514.jpg"
+                  src={editorialDeskHero}
                   alt="Editorial newsroom drafting table with printed United States electoral maps, brass dividers, and county turnout ledgers in morning window light"
                   referrerPolicy="no-referrer"
                   onError={() => setHeroImageError(true)}
